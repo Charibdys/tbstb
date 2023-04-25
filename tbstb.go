@@ -5,6 +5,8 @@ import (
 	"os"
 
 	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
 )
 
 func main() {
@@ -16,10 +18,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	botUser, err := bot.GetMe()
-	if err != nil {
-		fmt.Println("Error:", err)
-	}
+	updates, _ := bot.UpdatesViaLongPolling(nil)
 
-	fmt.Printf("Bot user: %+v\n", botUser)
+	bh, _ := th.NewBotHandler(bot, updates)
+
+	defer bh.Stop()
+
+	defer bot.StopLongPolling()
+
+	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
+		echoMessage(bot, message)
+	}, th.AnyMessage())
+
+	bh.Start()
+}
+
+// echoMessage echos message back to sender
+func echoMessage(bot *telego.Bot, message telego.Message) {
+	chatID := tu.ID(message.Chat.ID)
+	_, _ = bot.CopyMessage(tu.CopyMessage(
+		chatID,
+		chatID,
+		message.MessageID,
+	))
 }
