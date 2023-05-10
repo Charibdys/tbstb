@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+
+	database "github.com/Charibdys/tbstb/database"
 
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
@@ -26,11 +29,21 @@ func main() {
 
 	defer bot.StopLongPolling()
 
+	db := database.Init()
+
+	db.ListDatabases()
+
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		echoMessage(bot, message)
 	}, th.AnyMessage())
 
 	bh.Start()
+
+	defer func() {
+		if err = db.Client.Disconnect(context.Background()); err != nil {
+			panic(err)
+		}
+	}()
 }
 
 // echoMessage echos message back to sender
