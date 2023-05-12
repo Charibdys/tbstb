@@ -63,7 +63,6 @@ func (db *connection) CheckCollections() {
 	check := 0
 
 	for _, collName := range currentCollections {
-		fmt.Println(collName)
 		switch collName {
 		case "roles", "config", "tickets", "users":
 			check++
@@ -284,6 +283,4 @@ func (db *connection) ValidateSchema(create bool, database *mongo.Database) {
 			log.Println(createUsersErr)
 		}
 	}
-
-	fmt.Println(database)
 }
