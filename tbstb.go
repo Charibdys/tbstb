@@ -32,6 +32,7 @@ func main() {
 	db := database.Init()
 
 	db.ListDatabases()
+	db.CheckCollections()
 
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		echoMessage(bot, message)
