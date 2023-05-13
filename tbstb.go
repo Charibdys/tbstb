@@ -31,7 +31,16 @@ func main() {
 
 	db := database.Init()
 
+	config, err := db.GetConfig()
+	if err != nil {
+		config = db.HandleConfigError()
+	}
+
 	db.CheckCollections()
+
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		startCommand(bot, update, db, config)
+	}, th.CommandEqual("start"))
 
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		echoMessage(bot, message)
@@ -54,4 +63,36 @@ func echoMessage(bot *telego.Bot, message telego.Message) {
 		chatID,
 		message.MessageID,
 	))
+}
+
+func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection, config *database.Config) {
+	if db.GetUserCount() != 0 {
+		user, _ := db.GetUser(update.Message.From.ID)
+		if user != nil {
+			_, _ = bot.SendMessage(tu.Message(
+				tu.ID(user.ID),
+				"You have already started the bot!",
+			))
+		} else {
+			db.CreateUser(update.Message.From.ID, config)
+			_, _ = bot.SendMessage(tu.Message(
+				tu.ID(update.Message.From.ID),
+				"You have started the bot!",
+			))
+		}
+	} else {
+		userID := update.Message.From.ID
+		name := update.Message.From.FirstName
+		if len(update.Message.From.LastName) != 0 {
+			name = name + "" + update.Message.From.LastName
+		}
+
+		db.CreateUser(userID, config)
+		db.CreateRole(userID, name, "owner", config)
+
+		_, _ = bot.SendMessage(tu.Messagef(
+			tu.ID(userID),
+			"Welcome, %s! You have been authorized as owner", name,
+		))
+	}
 }

@@ -11,11 +11,47 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type connection struct {
+type Connection struct {
 	Client *mongo.Client
 }
 
-func Init() *connection {
+type Role struct {
+	ID       int64  `bson:"_id"`
+	Name     string `bson:"name"`
+	Onymity  string `bson:"onymity"`
+	RoleType string `bson:"role"`
+}
+type Config struct {
+	Onymity    string `bson:"defaultOnymity"`
+	UserReopen bool   `bson:"defaultUserReopen"`
+	RelayMedia bool   `bson:"relayMedia"`
+}
+
+type User struct {
+	ID                 int64 `bson:"_id"`
+	Onymity            bool  `bson:"onymity"`
+	DisabledBroadcasts bool  `bson:"disabledBroadcasts"`
+	CanReopen          bool  `bson:"canReopen"`
+	Banned             bool  `bson:"banned"`
+}
+
+type Ticket struct {
+	Creator     int64     `bson:"creator"`
+	Title       string    `bson:"title"`
+	DateCreated time.Time `bson:"dateCreated"`
+	Assignees   []int64   `bson:"assignees"`
+	Messages    []Message `bson:"messages"`
+	ClosedBy    int64     `bson:"closedBy"`
+	DateClosed  time.Time `bson:"dateClosed"`
+}
+type Message struct {
+	Sender   int64     `bson:"sender"`
+	DateSent time.Time `bson:"dateSent"`
+	Text     string    `bson:"text"`
+	Media    string    `bson:"media"`
+}
+
+func Init() *Connection {
 	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		log.Fatal(err)
@@ -29,7 +65,7 @@ func Init() *connection {
 		log.Fatal(err)
 	}
 
-	db := connection{
+	db := Connection{
 		Client: client,
 	}
 
@@ -37,7 +73,7 @@ func Init() *connection {
 }
 
 // List the names of databases contained in the MongoDB database
-func (db *connection) ListDatabases() {
+func (db *Connection) ListDatabases() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -49,10 +85,147 @@ func (db *connection) ListDatabases() {
 	fmt.Println(databases)
 }
 
+// CRUD operations
+
+func (db *Connection) CreateConfig() {
+	configColl := db.Client.Database("tbstb").Collection("config")
+
+	config := Config{
+		Onymity:    "realname",
+		UserReopen: false,
+		RelayMedia: true,
+	}
+
+	_, err := configColl.InsertOne(context.Background(), config)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) CreateUser(id int64, config *Config) {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	user := User{
+		ID:                 id,
+		Onymity:            false,
+		DisabledBroadcasts: false,
+		CanReopen:          config.UserReopen,
+		Banned:             false,
+	}
+
+	_, err := userColl.InsertOne(context.Background(), user)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) CreateRole(id int64, name string, roleType string, config *Config) {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	if config.Onymity != "realname" {
+		name = ""
+	}
+
+	role := Role{
+		ID:       id,
+		Name:     name,
+		Onymity:  config.Onymity,
+		RoleType: roleType,
+	}
+
+	_, err := roleColl.InsertOne(context.Background(), role)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) GetConfig() (*Config, error) {
+	configColl := db.Client.Database("tbstb").Collection("config")
+
+	var config Config
+	err := configColl.FindOne(context.Background(), bson.D{}).Decode(&config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+func (db *Connection) GetUser(id int64) (*User, error) {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	var user User
+	err := userColl.FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (db *Connection) GetRole() {
+	// STUB
+}
+
+func (db *Connection) UpdateConfig() {
+	// STUB
+}
+
+func (db *Connection) UpdateUser() {
+	// STUB
+}
+
+func (db *Connection) UpdateRole() {
+	// STUB
+}
+
+func (db *Connection) DeleteRole() {
+	// STUB
+}
+
+func (db *Connection) DeleteUser() {
+	// STUB
+}
+
+func (db *Connection) GetUserCount() int64 {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	opts := options.Count().SetHint("_id_")
+
+	count, err := userColl.CountDocuments(context.Background(), bson.D{}, opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return count
+}
+
+func (db *Connection) HandleConfigError() *Config {
+	configColl := db.Client.Database("tbstb").Collection("config")
+
+	opts := options.Count().SetHint("_id_")
+
+	count, err := configColl.CountDocuments(context.Background(), bson.D{}, opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if count > 1 {
+		configColl.Drop(context.Background())
+		db.CreateConfig()
+		config, _ := db.GetConfig()
+		return config
+	} else {
+		db.CreateConfig()
+		config, _ := db.GetConfig()
+		return config
+	}
+}
+
 // Check if the required collections exist in the database.
 // If all or only some collections do not exit, create them.
 // Otherwise, ensure that the collections have the latest validation schema.
-func (db *connection) CheckCollections() {
+func (db *Connection) CheckCollections() {
 	TBSTBDatabase := db.Client.Database("tbstb")
 
 	currentCollections, listCollErr := TBSTBDatabase.ListCollectionNames(context.Background(), bson.D{})
@@ -78,7 +251,7 @@ func (db *connection) CheckCollections() {
 
 // Creates the required collections if they do not exist
 // Otheriwse, updates the validation schema on the existing collections
-func (db *connection) ValidateSchema(create bool, database *mongo.Database) {
+func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 	rolesSchema := bson.M{
 		"bsonType": "object",
 		"title":    "Role Object Validation",
