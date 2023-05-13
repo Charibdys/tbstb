@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	database "github.com/Charibdys/tbstb/database"
 
@@ -41,6 +42,10 @@ func main() {
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		startCommand(bot, update, db, config)
 	}, th.CommandEqual("start"))
+
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		broadcastCommand(bot, update, db)
+	}, th.CommandEqual("broadcast"))
 
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		echoMessage(bot, message)
@@ -84,7 +89,7 @@ func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection
 		userID := update.Message.From.ID
 		name := update.Message.From.FirstName
 		if len(update.Message.From.LastName) != 0 {
-			name = name + "" + update.Message.From.LastName
+			name = name + " " + update.Message.From.LastName
 		}
 
 		db.CreateUser(userID, config)
@@ -95,4 +100,64 @@ func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection
 			"Welcome, %s! You have been authorized as owner", name,
 		))
 	}
+}
+
+func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connection) {
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		return
+	}
+	if role.RoleType != "owner" {
+		return
+	}
+	arg := strings.SplitN(update.Message.Text, " ", 2)
+	if len(arg) != 2 {
+		return
+	}
+	if strings.TrimSpace(arg[1]) != arg[1] {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: role.ID},
+			Text:             "Please remove any whitespaces between the command and the text.",
+			ReplyToMessageID: update.Message.MessageID,
+		})
+
+		return
+	}
+	users := db.GetBroadcastableUsers()
+	if users == nil {
+		return
+	}
+
+	var updatedEntities []telego.MessageEntity
+	if len(update.Message.Entities) > 1 {
+		updatedEntities = update.Message.Entities[1:]
+		offset := update.Message.Entities[0].Length + 1
+		for i := range updatedEntities {
+			updatedEntities[i].Offset -= offset
+		}
+	}
+
+	opts := telego.SendMessageParams{
+		Text:     arg[1],
+		Entities: updatedEntities,
+	}
+
+	var count int32 = 0
+	for _, user := range *users {
+		if user == role.ID {
+			continue
+		}
+		_, err = bot.SendMessage(
+			opts.WithChatID(telego.ChatID{ID: user}),
+		)
+		if err == nil {
+			count++
+		}
+	}
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:           telego.ChatID{ID: role.ID},
+		Text:             fmt.Sprintf("Success! Sent broadcast to %d users.", count),
+		ReplyToMessageID: update.Message.MessageID,
+	})
 }

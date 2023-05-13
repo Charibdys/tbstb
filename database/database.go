@@ -163,6 +163,43 @@ func (db *Connection) GetUser(id int64) (*User, error) {
 	return &user, nil
 }
 
+func (db *Connection) GetBroadcastableUsers() *[]int64 {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	filter := bson.D{
+		{Key: "disabledBroadcasts", Value: false},
+		{Key: "banned", Value: false},
+	}
+
+	values, err := userColl.Distinct(context.Background(), "_id", filter)
+	if err != nil {
+		return nil
+	}
+
+	userIDs := make([]int64, len(values))
+	for i, val := range values {
+		switch temp := val.(type) {
+		case int64:
+			userIDs[i] = temp
+		}
+	}
+
+	return &userIDs
+}
+
+func (db *Connection) GetUserCount() int64 {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	opts := options.Count().SetHint("_id_")
+
+	count, err := userColl.CountDocuments(context.Background(), bson.D{}, opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return count
+}
+
 func (db *Connection) GetRole(id int64) (*Role, error) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
@@ -259,19 +296,6 @@ func (db *Connection) DeleteUser(id int64) {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func (db *Connection) GetUserCount() int64 {
-	userColl := db.Client.Database("tbstb").Collection("users")
-
-	opts := options.Count().SetHint("_id_")
-
-	count, err := userColl.CountDocuments(context.Background(), bson.D{}, opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return count
 }
 
 func (db *Connection) HandleConfigError() *Config {
