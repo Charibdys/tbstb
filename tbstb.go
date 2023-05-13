@@ -31,12 +31,12 @@ func main() {
 
 	db := database.Init()
 
+	db.CheckCollections()
+
 	config, err := db.GetConfig()
 	if err != nil {
 		config = db.HandleConfigError()
 	}
-
-	db.CheckCollections()
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		startCommand(bot, update, db, config)

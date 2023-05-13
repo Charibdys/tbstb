@@ -163,28 +163,102 @@ func (db *Connection) GetUser(id int64) (*User, error) {
 	return &user, nil
 }
 
-func (db *Connection) GetRole() {
-	// STUB
+func (db *Connection) GetRole(id int64) (*Role, error) {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	var role Role
+	err := roleColl.FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&role)
+	if err != nil {
+		return nil, err
+	}
+
+	return &role, nil
 }
 
-func (db *Connection) UpdateConfig() {
-	// STUB
+func (db *Connection) UpdateConfig(config *Config) *Config {
+	configColl := db.Client.Database("tbstb").Collection("config")
+
+	var updatedConfig Config
+	err := configColl.FindOneAndUpdate(
+		context.Background(),
+		bson.D{},
+		bson.D{{
+			Key: "$set",
+			Value: bson.D{
+				{Key: "defaultOnymity", Value: config.Onymity},
+				{Key: "defaultUserReopen", Value: config.UserReopen},
+				{Key: "relayMedia", Value: config.RelayMedia},
+			},
+		}},
+	).Decode(&updatedConfig)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil
+		}
+		log.Fatal(err)
+	}
+
+	return &updatedConfig
 }
 
-func (db *Connection) UpdateUser() {
-	// STUB
+func (db *Connection) UpdateUser(user *User) {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	_, err := userColl.UpdateOne(
+		context.Background(),
+		bson.D{{Key: "_id", Value: user.ID}},
+		bson.D{{
+			Key: "$set",
+			Value: bson.D{
+				{Key: "banned", Value: user.Banned},
+				{Key: "onymity", Value: user.Onymity},
+				{Key: "disabledBroadcasts", Value: user.DisabledBroadcasts},
+				{Key: "canReopen", Value: user.CanReopen},
+			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func (db *Connection) UpdateRole() {
-	// STUB
+func (db *Connection) UpdateRole(role *Role) {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	_, err := roleColl.UpdateOne(
+		context.Background(),
+		bson.D{{Key: "_id", Value: role.ID}},
+		bson.D{{
+			Key: "$set",
+			Value: bson.D{
+				{Key: "name", Value: role.Name},
+				{Key: "onymity", Value: role.Onymity},
+				{Key: "role", Value: role.RoleType},
+			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func (db *Connection) DeleteRole() {
-	// STUB
+func (db *Connection) DeleteRole(id int64) {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	_, err := roleColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func (db *Connection) DeleteUser() {
-	// STUB
+func (db *Connection) DeleteUser(id int64) {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	_, err := userColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (db *Connection) GetUserCount() int64 {
