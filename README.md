@@ -38,10 +38,10 @@ TBSTB is not a single-instance bot; if TBSTB is to be used, a user must make a b
 
 ## Roadmap:
 
-- [] 0.1 - Connect to Telegram, receive updates; Database CRUD operations
-- [] 0.2 - Ticket generation
-- [] 0.3 - Resolve tickets
-- [] 0.X - Compatibility with group chats, ticket user interface, user-defined names/anonymity, promoting users, content management, statistics
+- [X] 0.1 - Connect to Telegram, receive updates; Database CRUD operations
+- [ ] 0.2 - Ticket generation
+- [ ] 0.3 - Resolve tickets
+- [ ] 0.X - Compatibility with group chats, ticket user interface, user-defined names/anonymity, promoting users, content management, statistics
 
 ## Contributing
 
