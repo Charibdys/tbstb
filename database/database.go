@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -36,19 +38,22 @@ type User struct {
 }
 
 type Ticket struct {
-	Creator     int64     `bson:"creator"`
-	Title       string    `bson:"title"`
-	DateCreated time.Time `bson:"dateCreated"`
-	Assignees   []int64   `bson:"assignees"`
-	Messages    []Message `bson:"messages"`
-	ClosedBy    int64     `bson:"closedBy"`
-	DateClosed  time.Time `bson:"dateClosed"`
+	Creator     int64      `bson:"creator"`
+	Title       string     `bson:"title"`
+	DateCreated time.Time  `bson:"dateCreated"`
+	Assignees   []int64    `bson:"assignees"`
+	Messages    []Message  `bson:"messages"`
+	ClosedBy    *int64     `bson:"closedBy"`
+	DateClosed  *time.Time `bson:"dateClosed"`
 }
+
+// TODO: Add entry for unique media ID
 type Message struct {
 	Sender   int64     `bson:"sender"`
+	MSID     int       `bson:"msid"`
 	DateSent time.Time `bson:"dateSent"`
-	Text     string    `bson:"text"`
-	Media    string    `bson:"media"`
+	Text     *string   `bson:"text"`
+	Media    *string   `bson:"media"`
 }
 
 func Init() *Connection {
@@ -117,6 +122,49 @@ func (db *Connection) CreateUser(id int64, config *Config) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (db *Connection) CreateTicket(creator int64, msid int, text *string, media *string, media_unique *string) (string, string) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	var title string
+	if text != nil {
+		rune_string := []rune(strings.Split(*text, "\n")[0])
+
+		if len(rune_string) > 50 {
+			rune_string = rune_string[:50]
+		}
+
+		title = string(rune_string)
+	}
+
+	ticket := Ticket{
+		Creator:     creator,
+		Title:       title,
+		DateCreated: time.Now(),
+		Assignees:   nil,
+		Messages: []Message{
+			{
+				Sender:   creator,
+				MSID:     msid,
+				DateSent: time.Now(),
+				Text:     text,
+				Media:    media,
+			},
+		},
+		ClosedBy:   nil,
+		DateClosed: nil,
+	}
+
+	result, err := ticketColl.InsertOne(context.Background(), ticket)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	id := result.InsertedID.(primitive.ObjectID).Hex()
+
+	// Use last 7 characters of string as UI identifier
+	return id, id[len(id)-7:]
 }
 
 func (db *Connection) CreateRole(id int64, name string, roleType string, config *Config) {
@@ -200,6 +248,25 @@ func (db *Connection) GetUserCount() int64 {
 	return count
 }
 
+func (db *Connection) GetTicket(id string) (*Ticket, error) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var ticket Ticket
+	err = ticketColl.FindOne(context.Background(), bson.D{{Key: "_id", Value: oid}}).Decode(&ticket)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ticket, nil
+}
+
+// TODO: Add function for getting multiple tickets
+
 func (db *Connection) GetRole(id int64) (*Role, error) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
@@ -260,6 +327,35 @@ func (db *Connection) UpdateUser(user *User) {
 	}
 }
 
+func (db *Connection) UpdateTicket(id string, ticket *Ticket) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ticketColl.UpdateOne(
+		context.Background(),
+		bson.D{{Key: "_id", Value: oid}},
+		bson.D{{
+			Key: "$set",
+			Value: bson.D{
+				{Key: "creator", Value: ticket.Creator},
+				{Key: "title", Value: ticket.Title},
+				{Key: "dateCreated", Value: ticket.DateCreated},
+				{Key: "assignees", Value: ticket.Assignees},
+				{Key: "messages", Value: ticket.Messages},
+				{Key: "closedBy", Value: ticket.ClosedBy},
+				{Key: "dateClosed", Value: ticket.DateClosed},
+			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func (db *Connection) UpdateRole(role *Role) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
@@ -293,6 +389,20 @@ func (db *Connection) DeleteUser(id int64) {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
 	_, err := userColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) DeleteTicket(id string) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ticketColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: oid}})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -429,6 +539,10 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 						"sender": bson.M{
 							"bsonType":    "long",
 							"description": "The ID of the user who sent this message",
+						},
+						"msid": bson.M{
+							"bsonType":    "long",
+							"description": "The message ID of this message",
 						},
 						"dateSent": bson.M{
 							"bsonType":    "date",
