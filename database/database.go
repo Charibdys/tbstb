@@ -265,7 +265,34 @@ func (db *Connection) GetTicket(id string) (*Ticket, error) {
 	return &ticket, nil
 }
 
-// TODO: Add function for getting multiple tickets
+func (db *Connection) GetTicketIDs(id int64) []string {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	type TicketOIDs struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+
+	var ticket_oids []TicketOIDs
+	var ticket_strings []string
+	cursor, err := ticketColl.Find(context.Background(), bson.D{{
+		Key: "creator", Value: bson.D{{Key: "$eq", Value: id}},
+	}},
+		options.Find().SetProjection(bson.D{{Key: "_id", Value: 1}}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cursor.All(context.Background(), &ticket_oids)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, ticket := range ticket_oids {
+		ticket_strings = append(ticket_strings, ticket.ID.Hex())
+	}
+
+	return ticket_strings
+}
 
 func (db *Connection) GetRole(id int64) (*Role, error) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	database "github.com/Charibdys/tbstb/database"
@@ -48,8 +49,20 @@ func main() {
 	}, th.CommandEqual("broadcast"))
 
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
-		echoMessage(bot, message)
+		messageHandler(bot, message, db, config)
 	}, th.AnyMessage())
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		newTicket(bot, query, db)
+	}, th.CallbackDataEqual("new_ticket"))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		nextPage(bot, query, db)
+	}, th.CallbackDataPrefix("next_page="))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		prevPage(bot, query, db)
+	}, th.CallbackDataPrefix("prev_page="))
 
 	bh.Start()
 
@@ -58,16 +71,6 @@ func main() {
 			panic(err)
 		}
 	}()
-}
-
-// echoMessage echos message back to sender
-func echoMessage(bot *telego.Bot, message telego.Message) {
-	chatID := tu.ID(message.Chat.ID)
-	_, _ = bot.CopyMessage(tu.CopyMessage(
-		chatID,
-		chatID,
-		message.MessageID,
-	))
 }
 
 func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection, config *database.Config) {
@@ -100,6 +103,88 @@ func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection
 			"Welcome, %s! You have been authorized as owner", name,
 		))
 	}
+}
+
+func messageHandler(bot *telego.Bot, message telego.Message, db *database.Connection, config *database.Config) {
+	user, err := db.GetUser(message.From.ID)
+	if err != nil {
+		return // TODO: Handle users that do not exist in the database
+	}
+
+	if message.ReplyToMessage == nil {
+		noReply(bot, message.MessageID, db.GetTicketIDs(user.ID), user)
+		return
+	}
+}
+
+func noReply(bot *telego.Bot, original_message int, ticket_ids []string, user *database.User) {
+	text := "No reply found.\n\n" +
+		"Would you like to create a new ticket with this message " +
+		"or add this message to one of your tickets?\n\n"
+
+	var ticket_options []telego.InlineKeyboardButton
+	if ticket_ids != nil {
+		limit := 3
+		ticket_count := len(ticket_ids)
+		if ticket_count <= 3 {
+			text += fmt.Sprintf("<b>Your tickets 1-%d</b>\n\n", ticket_count)
+			limit = ticket_count
+		} else {
+			text += fmt.Sprintf("<b>Your tickets 1-3 of %d</b>\n\n", ticket_count)
+		}
+
+		for i, id := range ticket_ids[:limit] {
+			text += fmt.Sprintf("<b>%d.</b> <code>%s</code>\n", i+1, id[len(id)-7:])
+			ticket_options = append(
+				ticket_options,
+				tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("ticket=%s", id)),
+			)
+		}
+
+		if ticket_count > 3 {
+			ticket_options = append(ticket_options, tu.InlineKeyboardButton("➡️").WithCallbackData("next_page=2"))
+		}
+	}
+
+	var markup *telego.InlineKeyboardMarkup
+	if ticket_options == nil {
+		markup = tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("Create New Ticket").WithCallbackData("new_ticket"),
+			),
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+			),
+		)
+	} else {
+		markup = tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("Create New Ticket").WithCallbackData("new_ticket"),
+			),
+			tu.InlineKeyboardRow(ticket_options...),
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+			),
+		)
+	}
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:           telego.ChatID{ID: user.ID},
+		Text:             text,
+		ReplyToMessageID: original_message,
+		ReplyMarkup:      markup,
+		ParseMode:        "HTML",
+	})
+}
+
+func newTicket(bot *telego.Bot, query telego.CallbackQuery, db *database.Connection) {
+	media, media_unique := getMessageMediaID(query.Message)
+	_, id_short := db.CreateTicket(query.From.ID, query.Message.MessageID, &query.Message.ReplyToMessage.Text, media, media_unique)
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            fmt.Sprintf("Created ticket %s", id_short),
+	})
 }
 
 func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connection) {
@@ -160,4 +245,183 @@ func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connec
 		Text:             fmt.Sprintf("Success! Sent broadcast to %d users.", count),
 		ReplyToMessageID: update.Message.MessageID,
 	})
+}
+
+func getMessageMediaID(message *telego.Message) (*string, *string) {
+	switch {
+	case message.Animation != nil:
+		return &message.Animation.FileID, &message.Animation.FileUniqueID
+	case message.Document != nil:
+		return &message.Document.FileID, &message.Document.FileUniqueID
+	case message.Sticker != nil:
+		return &message.Sticker.FileID, &message.Sticker.FileUniqueID
+	case message.Video != nil:
+		return &message.Video.FileID, &message.Video.FileUniqueID
+	case message.VideoNote != nil:
+		return &message.VideoNote.FileID, &message.VideoNote.FileUniqueID
+	case message.Audio != nil:
+		return &message.Audio.FileID, &message.Audio.FileUniqueID
+	case message.Photo != nil:
+		largest, width := 0, 0
+		for i, photo := range message.Photo {
+			if photo.Width > width {
+				width = photo.Width
+				largest = i
+			}
+		}
+		return &message.Photo[largest].FileID, &message.Photo[largest].FileUniqueID
+	case message.Voice != nil:
+		return &message.Voice.FileID, &message.Voice.FileUniqueID
+	}
+	return nil, nil
+}
+
+func nextPage(bot *telego.Bot, query telego.CallbackQuery, db *database.Connection) {
+	const page_size = 3
+
+	page := strings.Split(query.Data, "=")[1]
+
+	page_number, err := strconv.Atoi(page)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
+	tickets := db.GetTicketIDs(query.From.ID)
+
+	ticket_page := paginate(page_number, page_size, tickets)
+
+	text := "No reply found.\n\n" +
+		"Would you like to create a new ticket with this message " +
+		"or add this message to one of your tickets?\n\n"
+
+	if len(ticket_page) != 3 {
+		text += fmt.Sprintf("<b>Your tickets %d-%d of %d</b>\n\n", ((page_number-1)*page_size)+1, len(tickets), len(tickets))
+	} else {
+		text += fmt.Sprintf("<b>Your tickets %d-%d of %d</b>\n\n", ((page_number-1)*page_size)+1, (page_number * page_size), len(tickets))
+	}
+
+	var ticket_options []telego.InlineKeyboardButton
+
+	ticket_options = append(
+		ticket_options,
+		tu.InlineKeyboardButton("⬅️").WithCallbackData(fmt.Sprintf("prev_page=%d", page_number-1)),
+	)
+
+	for i, id := range ticket_page {
+		text += fmt.Sprintf("<b>%d.</b> <code>%s</code>\n", i+1, id[len(id)-7:])
+		ticket_options = append(
+			ticket_options,
+			tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("ticket=%s", id)),
+		)
+	}
+
+	if len(tickets) > (page_number)*page_size {
+		ticket_options = append(
+			ticket_options,
+			tu.InlineKeyboardButton("➡️").WithCallbackData(fmt.Sprintf("next_page=%d", page_number+1)),
+		)
+	}
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Create New Ticket").WithCallbackData("new_ticket"),
+		),
+		tu.InlineKeyboardRow(ticket_options...),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+		),
+	)
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: markup,
+	})
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+}
+
+func prevPage(bot *telego.Bot, query telego.CallbackQuery, db *database.Connection) {
+	const page_size = 3
+
+	page := strings.Split(query.Data, "=")[1]
+
+	page_number, err := strconv.Atoi(page)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
+	tickets := db.GetTicketIDs(query.From.ID)
+
+	ticket_page := paginate(page_number, page_size, tickets)
+
+	text := "No reply found.\n\n" +
+		"Would you like to create a new ticket with this message " +
+		"or add this message to one of your tickets?\n\n"
+
+	text += fmt.Sprintf("<b>Your tickets %d-%d of %d</b>\n\n", ((page_number-1)*page_size)+1, (page_number * page_size), len(tickets))
+
+	var ticket_options []telego.InlineKeyboardButton
+
+	if page_number != 1 {
+		ticket_options = append(
+			ticket_options,
+			tu.InlineKeyboardButton("⬅️").WithCallbackData(fmt.Sprintf("prev_page=%d", page_number-1)),
+		)
+	}
+
+	for i, id := range ticket_page {
+		text += fmt.Sprintf("<b>%d.</b> <code>%s</code>\n", i+1, id[len(id)-7:])
+		ticket_options = append(
+			ticket_options,
+			tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("ticket=%s", id)),
+		)
+	}
+
+	ticket_options = append(
+		ticket_options,
+		tu.InlineKeyboardButton("➡️").WithCallbackData(fmt.Sprintf("next_page=%d", page_number+1)),
+	)
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Create New Ticket").WithCallbackData("new_ticket"),
+		),
+		tu.InlineKeyboardRow(ticket_options...),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+		),
+	)
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: markup,
+	})
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+}
+
+func paginate(page int, page_size int, slice []string) []string {
+	if page == 0 {
+		return nil
+	}
+
+	limit := page_size
+	if len(slice) < page*page_size && len(slice) > (page-1)*page_size {
+		limit = len(slice) - (page-1)*page_size
+	}
+
+	offset := ((page - 1) * page_size)
+	var paged_slice []string
+
+	paged_slice = append(paged_slice, slice[offset:offset+(limit)]...)
+
+	return paged_slice
 }
