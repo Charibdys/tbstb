@@ -39,13 +39,14 @@ type User struct {
 }
 
 type Ticket struct {
-	Creator     int64      `bson:"creator"`
-	Title       string     `bson:"title"`
-	DateCreated time.Time  `bson:"dateCreated"`
-	Assignees   []int64    `bson:"assignees"`
-	Messages    []Message  `bson:"messages"`
-	ClosedBy    *int64     `bson:"closedBy"`
-	DateClosed  *time.Time `bson:"dateClosed"`
+	ID          primitive.ObjectID `bson:"_id"`
+	Creator     int64              `bson:"creator"`
+	Title       string             `bson:"title"`
+	DateCreated time.Time          `bson:"dateCreated"`
+	Assignees   []int64            `bson:"assignees"`
+	Messages    []Message          `bson:"messages"`
+	ClosedBy    *int64             `bson:"closedBy"`
+	DateClosed  *time.Time         `bson:"dateClosed"`
 }
 
 // TODO: Add entry for unique media ID
@@ -159,6 +160,7 @@ func (db *Connection) CreateTicket(creator int64, msid int, text *string, media 
 	}
 
 	ticket := Ticket{
+		ID:          primitive.NewObjectID(),
 		Creator:     creator,
 		Title:       title,
 		DateCreated: time.Now(),
@@ -315,25 +317,22 @@ func (db *Connection) GetTicketIDs(id int64) []string {
 	return ticket_strings
 }
 
-func (db *Connection) GetTicketIDFromMSID(id int, userID int64) string {
+func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string, *Ticket) {
 	ticketColl := db.Client.Database("tbstb").Collection("tickets")
 
-	type TicketOID struct {
-		ID primitive.ObjectID `bson:"_id"`
-	}
-
-	var oid TicketOID
+	var ticket Ticket
 
 	err := ticketColl.FindOne(context.Background(), bson.D{
-		{Key: "messages.receivers.msid", Value: id},
+		{Key: "messages.receivers.msid", Value: msid},
 		{Key: "messages.receivers.userID", Value: userID},
-	},
-		options.FindOne().SetProjection(bson.D{{Key: "_id", Value: 1}})).Decode((&oid))
+	}).Decode(&ticket)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return oid.ID.Hex()
+	id := ticket.ID.Hex()
+
+	return id, id[len(id)-7:], &ticket
 }
 
 func (db *Connection) GetRole(id int64) (*Role, error) {
@@ -348,7 +347,7 @@ func (db *Connection) GetRole(id int64) (*Role, error) {
 	return &role, nil
 }
 
-func (db *Connection) GetRoleIDs() []int64 {
+func (db *Connection) GetRoleIDs(exclude *int64) []int64 {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
 	type RoleID struct {
@@ -369,8 +368,16 @@ func (db *Connection) GetRoleIDs() []int64 {
 		log.Fatal(err)
 	}
 
-	for _, role := range roles {
-		ids = append(ids, role.ID)
+	if exclude != nil {
+		for _, role := range roles {
+			if role.ID != *exclude {
+				ids = append(ids, role.ID)
+			}
+		}
+	} else {
+		for _, role := range roles {
+			ids = append(ids, role.ID)
+		}
 	}
 
 	return ids
@@ -428,14 +435,9 @@ func (db *Connection) UpdateUser(user *User) {
 func (db *Connection) UpdateTicket(id string, ticket *Ticket) {
 	ticketColl := db.Client.Database("tbstb").Collection("tickets")
 
-	oid, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = ticketColl.UpdateOne(
+	_, err := ticketColl.UpdateOne(
 		context.Background(),
-		bson.D{{Key: "_id", Value: oid}},
+		bson.D{{Key: "_id", Value: ticket.ID}},
 		bson.D{{
 			Key: "$set",
 			Value: bson.D{

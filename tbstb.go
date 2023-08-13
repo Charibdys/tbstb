@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	database "github.com/Charibdys/tbstb/database"
 
@@ -122,22 +123,6 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		return
 	}
 
-	ticket := db.GetTicketIDFromMSID(message.ReplyToMessage.MessageID, user.ID)
-
-	media, _ := getMessageMediaID(message)
-
-	var text string
-	role, _ := db.GetRole(user.ID)
-	if role != nil {
-		text = formatRoleMessage(message, user, role, ticket)
-	} else {
-		text = formatMessage(message, user, ticket)
-	}
-
-	sendMessageToRoles(text, media, message, bot, db)
-}
-
-func formatMessage(message *telego.Message, user *database.User, ticket string) string {
 	var text string
 	if message.Text != "" {
 		text = message.Text
@@ -145,6 +130,36 @@ func formatMessage(message *telego.Message, user *database.User, ticket string) 
 		text = message.Caption
 	}
 
+	_, id_short, ticket := db.GetTicketFromMSID(message.ReplyToMessage.MessageID, user.ID)
+	media, _ := getMessageMediaID(message)
+
+	new_message := database.Message{
+		Sender:     user.ID,
+		OriginMSID: message.MessageID,
+		DateSent:   time.Now(),
+		Receivers:  nil,
+		Text:       &text,
+		Media:      media,
+	}
+
+	var fmt_text string
+	role, _ := db.GetRole(user.ID)
+	if role != nil {
+		fmt_text = formatRoleMessage(text, user, role, id_short)
+	} else {
+		fmt_text = formatMessage(text, user, id_short)
+	}
+
+	receivers := sendMessageToOrigin(fmt_text, media, &ticket.Creator, message, bot, db)
+
+	new_message.Receivers = receivers
+
+	ticket.Messages = append(ticket.Messages, new_message)
+
+	db.UpdateTicket(ticket.ID.Hex(), ticket)
+}
+
+func formatMessage(text string, user *database.User, ticket string) string {
 	// TODO: Replace name with a user mention/link to account if possible
 
 	if user.Onymity {
@@ -156,14 +171,7 @@ func formatMessage(message *telego.Message, user *database.User, ticket string) 
 	return text
 }
 
-func formatRoleMessage(message *telego.Message, user *database.User, role *database.Role, ticket string) string {
-	var text string
-	if message.Text != "" {
-		text = message.Text
-	} else if message.Caption != "" {
-		text = message.Caption
-	}
-
+func formatRoleMessage(text string, user *database.User, role *database.Role, ticket string) string {
 	// TODO: Replace name with a user mention/link to account if possible
 
 	if role.Onymity == "anon" {
@@ -177,11 +185,30 @@ func formatRoleMessage(message *telego.Message, user *database.User, role *datab
 	return text
 }
 
-func sendMessageToRoles(text string, media *string, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	roles := db.GetRoleIDs()
+func sendMessageToRoles(text string, media *string, sender *int64, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
+	roles := db.GetRoleIDs(sender)
 
 	var receivers []database.Receiver
 	for _, roleID := range roles {
+		msg := relay(roleID, text, media, message, bot)
+		if msg == nil {
+			continue
+		}
+		receivers = append(receivers, database.Receiver{
+			MSID:   msg.MessageID,
+			UserID: roleID,
+		})
+	}
+
+	return receivers
+}
+
+func sendMessageToOrigin(text string, media *string, origin *int64, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
+	users := db.GetRoleIDs(origin)
+	users = append(users, *origin)
+
+	var receivers []database.Receiver
+	for _, roleID := range users {
 		msg := relay(roleID, text, media, message, bot)
 		if msg == nil {
 			continue
@@ -352,21 +379,28 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 		return // TODO: Handle users that do not exist in the database
 	}
 
+	var text string
+	if reply_to.Text != "" {
+		text = reply_to.Text
+	} else if reply_to.Caption != "" {
+		text = reply_to.Caption
+	}
+
 	media, media_unique := getMessageMediaID(reply_to)
 
-	id, id_short, ticket := db.CreateTicket(reply_to.From.ID, reply_to.MessageID, &reply_to.Text, media, media_unique)
+	id, id_short, ticket := db.CreateTicket(reply_to.From.ID, reply_to.MessageID, &text, media, media_unique)
 
-	var text string
+	var fmt_text string
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
-		text = formatRoleMessage(reply_to, user, role, id_short)
+		fmt_text = formatRoleMessage(text, user, role, id_short)
 	} else {
-		text = formatMessage(reply_to, user, id_short)
+		fmt_text = formatMessage(text, user, id_short)
 	}
 
 	ticket.Messages[0].Receivers = append(
 		ticket.Messages[0].Receivers,
-		sendMessageToRoles(text, media, reply_to, bot, db)...,
+		sendMessageToRoles(fmt_text, media, &user.ID, reply_to, bot, db)...,
 	)
 
 	db.UpdateTicket(id, ticket)
