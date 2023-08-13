@@ -791,3 +791,27 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 		}
 	}
 }
+
+func (ticket *Ticket) GetMessageFromMSID(msid int) *Message {
+	for _, message := range ticket.Messages {
+		for _, receiver := range message.Receivers {
+			if receiver.MSID == msid {
+				return &message
+			}
+		}
+	}
+
+	return nil
+}
+
+func (message *Message) GetMessageReceivers() map[int64]int {
+	receivers := make(map[int64]int)
+
+	receivers[message.Sender] = message.OriginMSID
+
+	for _, receiver := range message.Receivers {
+		receivers[receiver.UserID] = receiver.MSID
+	}
+
+	return receivers
+}
