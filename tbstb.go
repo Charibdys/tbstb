@@ -163,26 +163,22 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 }
 
 func formatMessage(text string, user *database.User, ticket string) string {
-	// TODO: Replace name with a user mention/link to account if possible
-
 	if user.Onymity {
-		text = fmt.Sprintf("<b>Anonymous</b>, Ticket: %s\n\n", ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>Anonymous</b>, Ticket: <code>%s</code>\n\n", ticket[len(ticket)-7:]) + text
 	} else {
-		text = fmt.Sprintf("<b>%s</b>, Ticket: %s\n\n", user.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket[len(ticket)-7:]) + text
 	}
 
 	return text
 }
 
 func formatRoleMessage(text string, user *database.User, role *database.Role, ticket string) string {
-	// TODO: Replace name with a user mention/link to account if possible
-
 	if role.Onymity == "anon" {
-		text = fmt.Sprintf("<b>Admin</b>, Ticket: %s\n\n", ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>Admin</b>, Ticket: <code>%s</code>\n\n", ticket[len(ticket)-7:]) + text
 	} else if role.Onymity == "pseudonym" {
-		text = fmt.Sprintf("<b>%s</b>, Ticket: %s\n\n", role.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>%s</b>, Ticket: <code>%s</code>\n\n", role.Name, ticket[len(ticket)-7:]) + text
 	} else {
-		text = fmt.Sprintf("<b>%s</b>, Ticket: %s\n\n", user.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket[len(ticket)-7:]) + text
 	}
 
 	return text
