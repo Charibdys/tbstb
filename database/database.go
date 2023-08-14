@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -28,27 +30,38 @@ type Config struct {
 }
 
 type User struct {
-	ID                 int64 `bson:"_id"`
-	Onymity            bool  `bson:"onymity"`
-	DisabledBroadcasts bool  `bson:"disabledBroadcasts"`
-	CanReopen          bool  `bson:"canReopen"`
-	Banned             bool  `bson:"banned"`
+	ID                 int64  `bson:"_id"`
+	Name               string `bson:"name"`
+	Onymity            bool   `bson:"onymity"`
+	DisabledBroadcasts bool   `bson:"disabledBroadcasts"`
+	CanReopen          bool   `bson:"canReopen"`
+	Banned             bool   `bson:"banned"`
 }
 
 type Ticket struct {
-	Creator     int64     `bson:"creator"`
-	Title       string    `bson:"title"`
-	DateCreated time.Time `bson:"dateCreated"`
-	Assignees   []int64   `bson:"assignees"`
-	Messages    []Message `bson:"messages"`
-	ClosedBy    int64     `bson:"closedBy"`
-	DateClosed  time.Time `bson:"dateClosed"`
+	ID          primitive.ObjectID `bson:"_id"`
+	Creator     int64              `bson:"creator"`
+	Title       string             `bson:"title"`
+	DateCreated time.Time          `bson:"dateCreated"`
+	Assignees   []int64            `bson:"assignees"`
+	Messages    []Message          `bson:"messages"`
+	ClosedBy    *int64             `bson:"closedBy"`
+	DateClosed  *time.Time         `bson:"dateClosed"`
 }
+
+// TODO: Add entry for unique media ID
 type Message struct {
-	Sender   int64     `bson:"sender"`
-	DateSent time.Time `bson:"dateSent"`
-	Text     string    `bson:"text"`
-	Media    string    `bson:"media"`
+	Sender     int64      `bson:"sender"`
+	OriginMSID int        `bson:"originMSID"`
+	Receivers  []Receiver `bson:"receivers"`
+	DateSent   time.Time  `bson:"dateSent"`
+	Text       *string    `bson:"text"`
+	Media      *string    `bson:"media"`
+}
+
+type Receiver struct {
+	MSID   int   `bson:"msid"`
+	UserID int64 `bson:"userID"`
 }
 
 func Init() *Connection {
@@ -102,21 +115,79 @@ func (db *Connection) CreateConfig() {
 	}
 }
 
-func (db *Connection) CreateUser(id int64, config *Config) {
+func (db *Connection) CreateUser(id int64, username string, fullname string, config *Config) {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
-	user := User{
-		ID:                 id,
-		Onymity:            false,
-		DisabledBroadcasts: false,
-		CanReopen:          config.UserReopen,
-		Banned:             false,
+	var user User
+	if username != "" {
+		user = User{
+			ID:                 id,
+			Name:               username,
+			Onymity:            false,
+			DisabledBroadcasts: false,
+			CanReopen:          config.UserReopen,
+			Banned:             false,
+		}
+	} else {
+		user = User{
+			ID:                 id,
+			Name:               fullname,
+			Onymity:            false,
+			DisabledBroadcasts: false,
+			CanReopen:          config.UserReopen,
+			Banned:             false,
+		}
 	}
 
 	_, err := userColl.InsertOne(context.Background(), user)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (db *Connection) CreateTicket(creator int64, msid int, text *string, media *string, media_unique *string) (string, string, *Ticket) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	var title string
+	if text != nil {
+		rune_string := []rune(strings.Split(*text, "\n")[0])
+
+		if len(rune_string) > 50 {
+			rune_string = rune_string[:50]
+		}
+
+		title = string(rune_string)
+	}
+
+	ticket := Ticket{
+		ID:          primitive.NewObjectID(),
+		Creator:     creator,
+		Title:       title,
+		DateCreated: time.Now(),
+		Assignees:   nil,
+		Messages: []Message{
+			{
+				Sender:     creator,
+				OriginMSID: msid,
+				DateSent:   time.Now(),
+				Receivers:  nil,
+				Text:       text,
+				Media:      media,
+			},
+		},
+		ClosedBy:   nil,
+		DateClosed: nil,
+	}
+
+	result, err := ticketColl.InsertOne(context.Background(), ticket)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	id := result.InsertedID.(primitive.ObjectID).Hex()
+
+	// Use last 7 characters of string as UI identifier
+	return id, id[len(id)-7:], &ticket
 }
 
 func (db *Connection) CreateRole(id int64, name string, roleType string, config *Config) {
@@ -200,6 +271,99 @@ func (db *Connection) GetUserCount() int64 {
 	return count
 }
 
+func (db *Connection) GetTicket(id string) (*Ticket, error) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var ticket Ticket
+	err = ticketColl.FindOne(context.Background(), bson.D{{Key: "_id", Value: oid}}).Decode(&ticket)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ticket, nil
+}
+
+func (db *Connection) GetTicketIDs(id int64) []string {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	type TicketOIDs struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+
+	var ticket_oids []TicketOIDs
+	var ticket_strings []string
+	cursor, err := ticketColl.Find(context.Background(), bson.D{{
+		Key: "creator", Value: bson.D{{Key: "$eq", Value: id}},
+	}},
+		options.Find().SetProjection(bson.D{{Key: "_id", Value: 1}}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cursor.All(context.Background(), &ticket_oids)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, ticket := range ticket_oids {
+		ticket_strings = append(ticket_strings, ticket.ID.Hex())
+	}
+
+	return ticket_strings
+}
+
+func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string, *Ticket) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	var ticket Ticket
+
+	err := ticketColl.FindOne(context.Background(), bson.D{
+		{Key: "messages.receivers.msid", Value: msid},
+		{Key: "messages.receivers.userID", Value: userID},
+	}).Decode(&ticket)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	id := ticket.ID.Hex()
+
+	return id, id[len(id)-7:], &ticket
+}
+
+func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int64, *Message) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	type IDAndMessage struct {
+		ID      primitive.ObjectID `bson:"_id"`
+		Creator int64              `bson:"creator"`
+		Message []Message          `bson:"messages"`
+	}
+
+	var object IDAndMessage
+
+	err := ticketColl.FindOne(context.Background(), bson.D{},
+		options.FindOne().SetProjection(bson.D{
+			{Key: "messages", Value: bson.D{
+				{Key: "$elemMatch", Value: bson.D{
+					{Key: "receivers.userID", Value: userID},
+					{Key: "receivers.msid", Value: msid},
+				}},
+			}},
+			{Key: "creator", Value: 1},
+			{Key: "receivers", Value: 1},
+		})).Decode(&object)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return object.ID.Hex(), object.Creator, &object.Message[0]
+}
+
 func (db *Connection) GetRole(id int64) (*Role, error) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
@@ -210,6 +374,42 @@ func (db *Connection) GetRole(id int64) (*Role, error) {
 	}
 
 	return &role, nil
+}
+
+func (db *Connection) GetRoleIDs(exclude *int64) []int64 {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	type RoleID struct {
+		ID int64 `bson:"_id"`
+	}
+
+	var roles []RoleID
+	var ids []int64
+	cursor, err := roleColl.Find(context.Background(), bson.D{},
+		options.Find().SetProjection(bson.D{{Key: "_id", Value: 1}}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cursor.All(context.Background(), &roles)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if exclude != nil {
+		for _, role := range roles {
+			if role.ID != *exclude {
+				ids = append(ids, role.ID)
+			}
+		}
+	} else {
+		for _, role := range roles {
+			ids = append(ids, role.ID)
+		}
+	}
+
+	return ids
 }
 
 func (db *Connection) UpdateConfig(config *Config) *Config {
@@ -248,11 +448,61 @@ func (db *Connection) UpdateUser(user *User) {
 		bson.D{{
 			Key: "$set",
 			Value: bson.D{
+				{Key: "name", Value: user.Name},
 				{Key: "banned", Value: user.Banned},
 				{Key: "onymity", Value: user.Onymity},
 				{Key: "disabledBroadcasts", Value: user.DisabledBroadcasts},
 				{Key: "canReopen", Value: user.CanReopen},
 			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) UpdateTicket(id string, ticket *Ticket) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	_, err := ticketColl.UpdateOne(
+		context.Background(),
+		bson.D{{Key: "_id", Value: ticket.ID}},
+		bson.D{{
+			Key: "$set",
+			Value: bson.D{
+				{Key: "creator", Value: ticket.Creator},
+				{Key: "title", Value: ticket.Title},
+				{Key: "dateCreated", Value: ticket.DateCreated},
+				{Key: "assignees", Value: ticket.Assignees},
+				{Key: "messages", Value: ticket.Messages},
+				{Key: "closedBy", Value: ticket.ClosedBy},
+				{Key: "dateClosed", Value: ticket.DateClosed},
+			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) AppendMessage(ticket_id string, message *Message) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	id, err := primitive.ObjectIDFromHex(ticket_id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ticketColl.UpdateOne(context.Background(), bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$push", Value: bson.D{
+			{Key: "messages", Value: bson.D{
+				{Key: "sender", Value: message.Sender},
+				{Key: "originMSID", Value: message.OriginMSID},
+				{Key: "receivers", Value: message.Receivers},
+				{Key: "dateSent", Value: message.DateSent},
+				{Key: "text", Value: message.Text},
+				{Key: "media", Value: message.Media},
+			}}},
 		}},
 	)
 	if err != nil {
@@ -293,6 +543,20 @@ func (db *Connection) DeleteUser(id int64) {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
 	_, err := userColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) DeleteTicket(id string) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ticketColl.DeleteOne(context.Background(), bson.D{{Key: "_id", Value: oid}})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -424,11 +688,33 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 				"description": "An array of messages associated with this ticket",
 				"items": bson.M{
 					"bsonType": "object",
-					"required": []string{"sender", "dateSent"},
+					"required": []string{"sender", "originMSID", "dateSent"},
 					"properties": bson.M{
 						"sender": bson.M{
 							"bsonType":    "long",
 							"description": "The ID of the user who sent this message",
+						},
+						"originMSID": bson.M{
+							"bsonType":    "int",
+							"description": "Message ID associated with the sender",
+						},
+						"receivers": bson.M{
+							"bsonType":    "array",
+							"description": "An array of message IDs and their receivers",
+							"items": bson.M{
+								"bsonType": "object",
+								"required": []string{"msid", "userID"},
+								"properties": bson.M{
+									"msid": bson.M{
+										"bsonType":    "int",
+										"description": "Message ID associated with the user ID",
+									},
+									"userID": bson.M{
+										"bsonType":    "long",
+										"description": "The ID of the user who received this message",
+									},
+								},
+							},
 						},
 						"dateSent": bson.M{
 							"bsonType":    "date",
@@ -464,6 +750,10 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 			"_id": bson.M{
 				"bsonType":    "long",
 				"description": "A user that interacts with the bot",
+			},
+			"name": bson.M{
+				"bsonType":    "string",
+				"description": "Name of the user",
 			},
 			"onymity": bson.M{
 				"bsonType":    "bool",
@@ -554,4 +844,16 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 			log.Println(createUsersErr)
 		}
 	}
+}
+
+func (message *Message) GetMessageReceivers() map[int64]int {
+	receivers := make(map[int64]int)
+
+	receivers[message.Sender] = message.OriginMSID
+
+	for _, receiver := range message.Receivers {
+		receivers[receiver.UserID] = receiver.MSID
+	}
+
+	return receivers
 }
