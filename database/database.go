@@ -335,6 +335,35 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 	return id, id[len(id)-7:], &ticket
 }
 
+func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int64, *Message) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	type IDAndMessage struct {
+		ID      primitive.ObjectID `bson:"_id"`
+		Creator int64              `bson:"creator"`
+		Message []Message          `bson:"messages"`
+	}
+
+	var object IDAndMessage
+
+	err := ticketColl.FindOne(context.Background(), bson.D{},
+		options.FindOne().SetProjection(bson.D{
+			{Key: "messages", Value: bson.D{
+				{Key: "$elemMatch", Value: bson.D{
+					{Key: "receivers.userID", Value: userID},
+					{Key: "receivers.msid", Value: msid},
+				}},
+			}},
+			{Key: "creator", Value: 1},
+			{Key: "receivers", Value: 1},
+		})).Decode(&object)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return object.ID.Hex(), object.Creator, &object.Message[0]
+}
+
 func (db *Connection) GetRole(id int64) (*Role, error) {
 	roleColl := db.Client.Database("tbstb").Collection("roles")
 
@@ -449,6 +478,31 @@ func (db *Connection) UpdateTicket(id string, ticket *Ticket) {
 				{Key: "closedBy", Value: ticket.ClosedBy},
 				{Key: "dateClosed", Value: ticket.DateClosed},
 			},
+		}},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (db *Connection) AppendMessage(ticket_id string, message *Message) {
+	ticketColl := db.Client.Database("tbstb").Collection("tickets")
+
+	id, err := primitive.ObjectIDFromHex(ticket_id)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ticketColl.UpdateOne(context.Background(), bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$push", Value: bson.D{
+			{Key: "messages", Value: bson.D{
+				{Key: "sender", Value: message.Sender},
+				{Key: "originMSID", Value: message.OriginMSID},
+				{Key: "receivers", Value: message.Receivers},
+				{Key: "dateSent", Value: message.DateSent},
+				{Key: "text", Value: message.Text},
+				{Key: "media", Value: message.Media},
+			}}},
 		}},
 	)
 	if err != nil {
@@ -790,18 +844,6 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 			log.Println(createUsersErr)
 		}
 	}
-}
-
-func (ticket *Ticket) GetMessageFromMSID(msid int) *Message {
-	for _, message := range ticket.Messages {
-		for _, receiver := range message.Receivers {
-			if receiver.MSID == msid {
-				return &message
-			}
-		}
-	}
-
-	return nil
 }
 
 func (message *Message) GetMessageReceivers() map[int64]int {

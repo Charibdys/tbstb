@@ -42,11 +42,11 @@ func main() {
 	}
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
-		startCommand(bot, update, db, config)
+		startCommand(bot, &update, db, config)
 	}, th.CommandEqual("start"))
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
-		broadcastCommand(bot, update, db)
+		broadcastCommand(bot, &update, db)
 	}, th.CommandEqual("broadcast"))
 
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
@@ -58,11 +58,11 @@ func main() {
 	}, th.CallbackDataEqual("new_ticket"))
 
 	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
-		nextPage(bot, query, db)
+		nextPage(bot, &query, db)
 	}, th.CallbackDataPrefix("next_page="))
 
 	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
-		prevPage(bot, query, db)
+		prevPage(bot, &query, db)
 	}, th.CallbackDataPrefix("prev_page="))
 
 	bh.Start()
@@ -74,14 +74,15 @@ func main() {
 	}()
 }
 
-func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection, config *database.Config) {
+func startCommand(bot *telego.Bot, update *telego.Update, db *database.Connection, config *database.Config) {
 	if db.GetUserCount() != 0 {
 		user, _ := db.GetUser(update.Message.From.ID)
 		if user != nil {
-			_, _ = bot.SendMessage(tu.Message(
-				tu.ID(user.ID),
-				"You have already started the bot!",
-			))
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:    telego.ChatID{ID: user.ID},
+				Text:      "You have already started the bot!",
+				ParseMode: "HTML",
+			})
 		} else {
 			username := update.Message.From.Username
 			name := update.Message.From.FirstName
@@ -89,10 +90,11 @@ func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection
 				name = name + " " + update.Message.From.LastName
 			}
 			db.CreateUser(update.Message.From.ID, username, name, config)
-			_, _ = bot.SendMessage(tu.Message(
-				tu.ID(update.Message.From.ID),
-				"You have started the bot!",
-			))
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:    telego.ChatID{ID: update.Message.From.ID},
+				Text:      "You have started the bot!",
+				ParseMode: "HTML",
+			})
 		}
 	} else {
 		userID := update.Message.From.ID
@@ -105,17 +107,27 @@ func startCommand(bot *telego.Bot, update telego.Update, db *database.Connection
 		db.CreateUser(userID, username, name, config)
 		db.CreateRole(userID, name, "owner", config)
 
-		_, _ = bot.SendMessage(tu.Messagef(
-			tu.ID(userID),
-			"Welcome, %s! You have been authorized as owner", name,
-		))
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:    telego.ChatID{ID: userID},
+			Text:      fmt.Sprintf("Welcome, %s! You have been authorized as owner", name),
+			ParseMode: "HTML",
+		})
 	}
+}
+
+func noUser(bot *telego.Bot, userID int64) {
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:    telego.ChatID{ID: userID},
+		Text:      "Please use /start before creating a ticket.",
+		ParseMode: "HTML",
+	})
 }
 
 func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Connection, config *database.Config) {
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
-		return // TODO: Handle users that do not exist in the database
+		noUser(bot, message.From.ID)
+		return
 	}
 
 	if message.ReplyToMessage == nil {
@@ -130,20 +142,10 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		text = message.Caption
 	}
 
-	_, id_short, ticket := db.GetTicketFromMSID(message.ReplyToMessage.MessageID, user.ID)
-	reply_message := ticket.GetMessageFromMSID(message.ReplyToMessage.MessageID)
+	id, creator, reply_message := db.GetTicketIDAndMessage(message.ReplyToMessage.MessageID, user.ID)
 	reply_to := reply_message.GetMessageReceivers()
-
+	id_short := id[len(id)-7:]
 	media, _ := getMessageMediaID(message)
-
-	new_message := database.Message{
-		Sender:     user.ID,
-		OriginMSID: message.MessageID,
-		DateSent:   time.Now(),
-		Receivers:  nil,
-		Text:       &text,
-		Media:      media,
-	}
 
 	var fmt_text string
 	role, _ := db.GetRole(user.ID)
@@ -153,20 +155,23 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		fmt_text = formatMessage(text, user, id_short)
 	}
 
-	receivers := sendMessageToOrigin(fmt_text, media, &ticket.Creator, reply_to, message, bot, db)
+	receivers := sendMessageToOrigin(fmt_text, media, creator, reply_to, message, bot, db)
 
-	new_message.Receivers = receivers
-
-	ticket.Messages = append(ticket.Messages, new_message)
-
-	db.UpdateTicket(ticket.ID.Hex(), ticket)
+	db.AppendMessage(id, &database.Message{
+		Sender:     user.ID,
+		OriginMSID: message.MessageID,
+		DateSent:   time.Now(),
+		Receivers:  receivers,
+		Text:       &text,
+		Media:      media,
+	})
 }
 
 func formatMessage(text string, user *database.User, ticket string) string {
 	if user.Onymity {
-		text = fmt.Sprintf("<b>Anonymous</b>, Ticket: <code>%s</code>\n\n", ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>Anonymous</b>, Ticket: <code>%s</code>\n\n", ticket) + text
 	} else {
-		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket) + text
 	}
 
 	return text
@@ -174,18 +179,18 @@ func formatMessage(text string, user *database.User, ticket string) string {
 
 func formatRoleMessage(text string, user *database.User, role *database.Role, ticket string) string {
 	if role.Onymity == "anon" {
-		text = fmt.Sprintf("<b>Admin</b>, Ticket: <code>%s</code>\n\n", ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>Admin</b>, Ticket: <code>%s</code>\n\n", ticket) + text
 	} else if role.Onymity == "pseudonym" {
-		text = fmt.Sprintf("<b>%s</b>, Ticket: <code>%s</code>\n\n", role.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b>%s</b>, Ticket: <code>%s</code>\n\n", role.Name, ticket) + text
 	} else {
-		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket[len(ticket)-7:]) + text
+		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Name, ticket) + text
 	}
 
 	return text
 }
 
-func sendMessageToRoles(text string, media *string, sender *int64, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	roles := db.GetRoleIDs(sender)
+func sendMessageToRoles(text string, media *string, sender int64, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
+	roles := db.GetRoleIDs(&sender)
 
 	var receivers []database.Receiver
 	for _, roleID := range roles {
@@ -202,20 +207,33 @@ func sendMessageToRoles(text string, media *string, sender *int64, message *tele
 	return receivers
 }
 
-func sendMessageToOrigin(text string, media *string, origin *int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	users := db.GetRoleIDs(origin)
-	users = append(users, *origin)
+func sendMessageToOrigin(text string, media *string, origin int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
+	users := db.GetRoleIDs(&origin)
+	users = append(users, origin)
 
 	var receivers []database.Receiver
-	for _, userID := range users {
-		msg := relayWithReply(userID, text, media, reply_to[userID], message, bot)
-		if msg == nil {
-			continue
+	if reply_to == nil {
+		for _, userID := range users {
+			msg := relay(userID, text, media, message, bot)
+			if msg == nil {
+				continue
+			}
+			receivers = append(receivers, database.Receiver{
+				MSID:   msg.MessageID,
+				UserID: userID,
+			})
 		}
-		receivers = append(receivers, database.Receiver{
-			MSID:   msg.MessageID,
-			UserID: userID,
-		})
+	} else {
+		for _, userID := range users {
+			msg := relayWithReply(userID, text, media, reply_to[userID], message, bot)
+			if msg == nil {
+				continue
+			}
+			receivers = append(receivers, database.Receiver{
+				MSID:   msg.MessageID,
+				UserID: userID,
+			})
+		}
 	}
 
 	return receivers
@@ -474,7 +492,8 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 	reply_to := query.Message.ReplyToMessage
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
-		return // TODO: Handle users that do not exist in the database
+		noUser(bot, reply_to.From.ID)
+		return
 	}
 
 	var text string
@@ -498,7 +517,7 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 
 	ticket.Messages[0].Receivers = append(
 		ticket.Messages[0].Receivers,
-		sendMessageToRoles(fmt_text, media, &user.ID, reply_to, bot, db)...,
+		sendMessageToRoles(fmt_text, media, user.ID, reply_to, bot, db)...,
 	)
 
 	db.UpdateTicket(id, ticket)
@@ -509,9 +528,10 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 	})
 }
 
-func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connection) {
+func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
 	role, err := db.GetRole(update.Message.From.ID)
 	if err != nil {
+		noUser(bot, update.Message.From.ID)
 		return
 	}
 	if role.RoleType != "owner" {
@@ -526,10 +546,12 @@ func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connec
 			ChatID:           telego.ChatID{ID: role.ID},
 			Text:             "Please remove any whitespaces between the command and the text.",
 			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
 		})
 
 		return
 	}
+
 	users := db.GetBroadcastableUsers()
 	if users == nil {
 		return
@@ -544,19 +566,16 @@ func broadcastCommand(bot *telego.Bot, update telego.Update, db *database.Connec
 		}
 	}
 
-	opts := telego.SendMessageParams{
-		Text:     arg[1],
-		Entities: updatedEntities,
-	}
-
 	var count int32 = 0
 	for _, user := range *users {
 		if user == role.ID {
 			continue
 		}
-		_, err = bot.SendMessage(
-			opts.WithChatID(telego.ChatID{ID: user}),
-		)
+		_, err = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:   telego.ChatID{ID: user},
+			Text:     arg[1],
+			Entities: updatedEntities,
+		})
 		if err == nil {
 			count++
 		}
@@ -598,7 +617,7 @@ func getMessageMediaID(message *telego.Message) (*string, *string) {
 	return nil, nil
 }
 
-func nextPage(bot *telego.Bot, query telego.CallbackQuery, db *database.Connection) {
+func nextPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
 
 	page := strings.Split(query.Data, "=")[1]
@@ -666,7 +685,7 @@ func nextPage(bot *telego.Bot, query telego.CallbackQuery, db *database.Connecti
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
-func prevPage(bot *telego.Bot, query telego.CallbackQuery, db *database.Connection) {
+func prevPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
 
 	page := strings.Split(query.Data, "=")[1]
