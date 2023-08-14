@@ -49,6 +49,10 @@ func main() {
 		broadcastCommand(bot, &update, db)
 	}, th.CommandEqual("broadcast"))
 
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		versionCommand(bot, &update, db)
+	}, th.CommandEqual("version"))
+
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		messageHandler(bot, &message, db, config)
 	}, th.AnyMessage())
@@ -585,6 +589,25 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 		ChatID:           telego.ChatID{ID: role.ID},
 		Text:             fmt.Sprintf("Success! Sent broadcast to %d users.", count),
 		ReplyToMessageID: update.Message.MessageID,
+	})
+}
+
+func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+	user, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message.From.ID)
+		return
+	}
+
+	version := "0.3"
+	source := "github.com/Charibdys/tbstb"
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:                telego.ChatID{ID: user.ID},
+		Text:                  fmt.Sprintf("TBSTB v%s ~ <a href=\"%s\">[Source]</a>", version, source),
+		ReplyToMessageID:      update.Message.MessageID,
+		DisableWebPagePreview: false,
+		ParseMode:             "HTML",
 	})
 }
 
