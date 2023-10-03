@@ -31,7 +31,8 @@ type Config struct {
 
 type User struct {
 	ID                 int64  `bson:"_id"`
-	Name               string `bson:"name"`
+	Username           string `bson:"username,omitempty"`
+	Fullname           string `bson:"fullname"`
 	Onymity            bool   `bson:"onymity"`
 	DisabledBroadcasts bool   `bson:"disabledBroadcasts"`
 	CanReopen          bool   `bson:"canReopen"`
@@ -118,25 +119,14 @@ func (db *Connection) CreateConfig() {
 func (db *Connection) CreateUser(id int64, username string, fullname string, config *Config) {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
-	var user User
-	if username != "" {
-		user = User{
-			ID:                 id,
-			Name:               username,
-			Onymity:            false,
-			DisabledBroadcasts: false,
-			CanReopen:          config.UserReopen,
-			Banned:             false,
-		}
-	} else {
-		user = User{
-			ID:                 id,
-			Name:               fullname,
-			Onymity:            false,
-			DisabledBroadcasts: false,
-			CanReopen:          config.UserReopen,
-			Banned:             false,
-		}
+	user := User{
+		ID:                 id,
+		Username:           username,
+		Fullname:           fullname,
+		Onymity:            false,
+		DisabledBroadcasts: false,
+		CanReopen:          config.UserReopen,
+		Banned:             false,
 	}
 
 	_, err := userColl.InsertOne(context.Background(), user)
@@ -448,7 +438,8 @@ func (db *Connection) UpdateUser(user *User) {
 		bson.D{{
 			Key: "$set",
 			Value: bson.D{
-				{Key: "name", Value: user.Name},
+				{Key: "username", Value: user.Username},
+				{Key: "fullname", Value: user.Fullname},
 				{Key: "banned", Value: user.Banned},
 				{Key: "onymity", Value: user.Onymity},
 				{Key: "disabledBroadcasts", Value: user.DisabledBroadcasts},
@@ -751,9 +742,13 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 				"bsonType":    "long",
 				"description": "A user that interacts with the bot",
 			},
-			"name": bson.M{
+			"username": bson.M{
 				"bsonType":    "string",
-				"description": "Name of the user",
+				"description": "Username of the user",
+			},
+			"fullname": bson.M{
+				"bsonType":    "string",
+				"description": "Display name of the user",
 			},
 			"onymity": bson.M{
 				"bsonType":    "bool",
