@@ -50,14 +50,14 @@ type Ticket struct {
 	DateClosed  *time.Time         `bson:"dateClosed"`
 }
 
-// TODO: Add entry for unique media ID
 type Message struct {
-	Sender     int64      `bson:"sender"`
-	OriginMSID int        `bson:"originMSID"`
-	Receivers  []Receiver `bson:"receivers"`
-	DateSent   time.Time  `bson:"dateSent"`
-	Text       *string    `bson:"text"`
-	Media      *string    `bson:"media"`
+	Sender        int64      `bson:"sender"`
+	OriginMSID    int        `bson:"originMSID"`
+	Receivers     []Receiver `bson:"receivers"`
+	DateSent      time.Time  `bson:"dateSent"`
+	Text          *string    `bson:"text"`
+	Media         *string    `bson:"media"`
+	UniqueMediaID *string    `bson:"uniqueMediaID,omitempty"`
 }
 
 type Receiver struct {
@@ -157,12 +157,13 @@ func (db *Connection) CreateTicket(creator int64, msid int, text *string, media 
 		Assignees:   nil,
 		Messages: []Message{
 			{
-				Sender:     creator,
-				OriginMSID: msid,
-				DateSent:   time.Now(),
-				Receivers:  nil,
-				Text:       text,
-				Media:      media,
+				Sender:        creator,
+				OriginMSID:    msid,
+				DateSent:      time.Now(),
+				Receivers:     nil,
+				Text:          text,
+				Media:         media,
+				UniqueMediaID: media_unique,
 			},
 		},
 		ClosedBy:   nil,
@@ -493,6 +494,7 @@ func (db *Connection) AppendMessage(ticket_id string, message *Message) {
 				{Key: "dateSent", Value: message.DateSent},
 				{Key: "text", Value: message.Text},
 				{Key: "media", Value: message.Media},
+				{Key: "uniqueMediaID", Value: message.UniqueMediaID},
 			}}},
 		}},
 	)
@@ -576,7 +578,7 @@ func (db *Connection) HandleConfigError() *Config {
 }
 
 // Check if the required collections exist in the database.
-// If all or only some collections do not exit, create them.
+// If all or only some collections do not exist, create them.
 // Otherwise, ensure that the collections have the latest validation schema.
 func (db *Connection) CheckCollections() {
 	TBSTBDatabase := db.Client.Database("tbstb")
@@ -717,7 +719,11 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 						},
 						"media": bson.M{
 							"bsonType":    "string",
-							"description": "A file_id associated with the media in this message",
+							"description": "A file id associated with the media in this message",
+						},
+						"uniqueMediaID": bson.M{
+							"bsonType":    "string",
+							"description": "A unique file id associated with the media in this message",
 						},
 					},
 				},

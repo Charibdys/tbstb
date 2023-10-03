@@ -149,7 +149,7 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	id, creator, reply_message := db.GetTicketIDAndMessage(message.ReplyToMessage.MessageID, user.ID)
 	reply_to := reply_message.GetMessageReceivers()
 	id_short := id[len(id)-7:]
-	media, _ := getMessageMediaID(message)
+	media, uniqueMediaID := getMessageMediaID(message)
 
 	var fmt_text string
 	role, _ := db.GetRole(user.ID)
@@ -162,12 +162,13 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	receivers := sendMessageToOrigin(fmt_text, media, creator, reply_to, message, bot, db)
 
 	db.AppendMessage(id, &database.Message{
-		Sender:     user.ID,
-		OriginMSID: message.MessageID,
-		DateSent:   time.Now(),
-		Receivers:  receivers,
-		Text:       &text,
-		Media:      media,
+		Sender:        user.ID,
+		OriginMSID:    message.MessageID,
+		DateSent:      time.Now(),
+		Receivers:     receivers,
+		Text:          &text,
+		Media:         media,
+		UniqueMediaID: uniqueMediaID,
 	})
 }
 
