@@ -47,7 +47,7 @@ func main() {
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		broadcastCommand(bot, &update, db)
-	}, th.CommandEqual("broadcast"))
+	}, th.Union(th.CommandEqual("broadcast"), th.CaptionCommandEqual("broadcast")))
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		versionCommand(bot, &update, db)
@@ -333,6 +333,96 @@ func relay(id int64, text string, media *string, message *telego.Message, bot *t
 	return msg
 }
 
+func relayWithEntities(id int64, text string, entities []telego.MessageEntity, media *string, message *telego.Message, bot *telego.Bot) *telego.Message {
+	var msg *telego.Message
+	if media == nil {
+		var err error
+		msg, err = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:   telego.ChatID{ID: id},
+			Text:     text,
+			Entities: entities,
+		})
+		if err != nil {
+			fmt.Printf("%s\n", err)
+		}
+	} else {
+		switch {
+		case message.Animation != nil:
+			msg, _ = bot.SendAnimation(&telego.SendAnimationParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Animation: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		case message.Document != nil:
+			msg, _ = bot.SendDocument(&telego.SendDocumentParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Document: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		case message.Sticker != nil:
+			msg, _ = bot.SendSticker(&telego.SendStickerParams{
+				ChatID: telego.ChatID{ID: id},
+				Sticker: telego.InputFile{
+					FileID: *media,
+				},
+			})
+		case message.Video != nil:
+			msg, _ = bot.SendVideo(&telego.SendVideoParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Video: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		case message.VideoNote != nil:
+			msg, _ = bot.SendVideoNote(&telego.SendVideoNoteParams{
+				ChatID: telego.ChatID{ID: id},
+				VideoNote: telego.InputFile{
+					FileID: *media,
+				},
+			})
+		case message.Audio != nil:
+			msg, _ = bot.SendAudio(&telego.SendAudioParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Audio: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		case message.Photo != nil:
+			msg, _ = bot.SendPhoto(&telego.SendPhotoParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Photo: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		case message.Voice != nil:
+			msg, _ = bot.SendVoice(&telego.SendVoiceParams{
+				ChatID:  telego.ChatID{ID: id},
+				Caption: text,
+				Voice: telego.InputFile{
+					FileID: *media,
+				},
+				CaptionEntities: entities,
+			})
+		default:
+			return nil
+		}
+	}
+
+	return msg
+}
+
 func relayWithReply(id int64, text string, media *string, reply_to int, message *telego.Message, bot *telego.Bot) *telego.Message {
 	var msg *telego.Message
 	if media == nil {
@@ -541,11 +631,33 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 	if role.RoleType != "owner" {
 		return
 	}
-	arg := strings.SplitN(update.Message.Text, " ", 2)
-	if len(arg) != 2 {
-		return
+
+	var text string
+	if update.Message.Caption == "" {
+		text = update.Message.Text
+	} else {
+		text = update.Message.Caption
 	}
-	if strings.TrimSpace(arg[1]) != arg[1] {
+
+	arg := strings.SplitN(text, " ", 2)
+	if len(arg) != 2 {
+		if update.Message.Caption != "" {
+			text = ""
+		} else {
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:           telego.ChatID{ID: role.ID},
+				Text:             "The broadcast command requires input.",
+				ReplyToMessageID: update.Message.MessageID,
+				ParseMode:        "HTML",
+			})
+
+			return
+		}
+	} else {
+		text = arg[1]
+	}
+
+	if strings.TrimSpace(text) != text {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
 			ChatID:           telego.ChatID{ID: role.ID},
 			Text:             "Please remove any whitespaces between the command and the text.",
@@ -568,19 +680,23 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 		for i := range updatedEntities {
 			updatedEntities[i].Offset -= offset
 		}
+	} else if len(update.Message.CaptionEntities) > 1 {
+		updatedEntities = update.Message.CaptionEntities[1:]
+		offset := update.Message.CaptionEntities[0].Length + 1
+		for i := range updatedEntities {
+			updatedEntities[i].Offset -= offset
+		}
 	}
+
+	message_media, _ := getMessageMediaID(update.Message)
 
 	var count int32 = 0
 	for _, user := range *users {
 		if user == role.ID {
 			continue
 		}
-		_, err = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:   telego.ChatID{ID: user},
-			Text:     arg[1],
-			Entities: updatedEntities,
-		})
-		if err == nil {
+		message := relayWithEntities(user, text, updatedEntities, message_media, update.Message, bot)
+		if message != nil {
 			count++
 		}
 	}
