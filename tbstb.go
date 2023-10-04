@@ -66,6 +66,10 @@ func main() {
 	}, th.CallbackDataPrefix("ticket="))
 
 	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		cancelAddToTicket(bot, &query, db)
+	}, th.CallbackDataEqual("cancel_addto"))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
 		nextPage(bot, &query, db)
 	}, th.CallbackDataPrefix("next_page="))
 
@@ -578,7 +582,7 @@ func noReply(bot *telego.Bot, original_message int, ticket_ids []string, user *d
 				tu.InlineKeyboardButton("Create New Ticket").WithCallbackData("new_ticket"),
 			),
 			tu.InlineKeyboardRow(
-				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_addto"),
 			),
 		)
 	} else {
@@ -588,7 +592,7 @@ func noReply(bot *telego.Bot, original_message int, ticket_ids []string, user *d
 			),
 			tu.InlineKeyboardRow(ticket_options...),
 			tu.InlineKeyboardRow(
-				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+				tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_addto"),
 			),
 		)
 	}
@@ -640,6 +644,26 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 		CallbackQueryID: query.ID,
 		Text:            fmt.Sprintf("Created ticket %s", id_short),
 	})
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        fmt.Sprintf("Created ticket <code>%s</code>.\nYour ticket will be addressed shortly.", id_short),
+		ParseMode:   "HTML",
+		ReplyMarkup: nil,
+	})
+}
+
+func cancelAddToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            "Canceled adding message to ticket",
+	})
+
+	bot.DeleteMessage(&telego.DeleteMessageParams{
+		ChatID:    telego.ChatID{ID: query.From.ID},
+		MessageID: query.Message.MessageID,
+	})
 }
 
 func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
@@ -679,6 +703,19 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 		Text:          &text,
 		Media:         media,
 		UniqueMediaID: media_unique,
+	})
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            fmt.Sprintf("Added message to ticket %s", ticketID[len(ticketID)-7:]),
+	})
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        fmt.Sprintf("Added message to ticket <code>%s</code>.\nYour message will be addressed shortly.", ticketID[len(ticketID)-7:]),
+		ParseMode:   "HTML",
+		ReplyMarkup: nil,
 	})
 }
 
