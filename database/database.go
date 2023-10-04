@@ -337,16 +337,20 @@ func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int
 
 	var object IDAndMessage
 
-	err := ticketColl.FindOne(context.Background(), bson.D{},
+	err := ticketColl.FindOne(context.Background(), bson.D{
+		{Key: "messages.receivers.msid", Value: msid},
+		{Key: "messages.receivers.userID", Value: userID},
+	},
 		options.FindOne().SetProjection(bson.D{
+			{Key: "_id", Value: 1},
+			{Key: "creator", Value: 1},
 			{Key: "messages", Value: bson.D{
 				{Key: "$elemMatch", Value: bson.D{
-					{Key: "receivers.userID", Value: userID},
 					{Key: "receivers.msid", Value: msid},
-				}},
+					{Key: "receivers.userID", Value: userID},
+				},
+				},
 			}},
-			{Key: "creator", Value: 1},
-			{Key: "receivers", Value: 1},
 		})).Decode(&object)
 	if err != nil {
 		log.Fatal(err)
