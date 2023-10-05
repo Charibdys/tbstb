@@ -58,6 +58,10 @@ func main() {
 	}, th.CommandEqual("close"))
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		reopenCommand(bot, &update, db)
+	}, th.CommandEqual("reopen"))
+
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		assignCommand(bot, &update, db)
 	}, th.CommandEqual("assign"))
 
@@ -922,6 +926,45 @@ func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 	text := fmt.Sprintf("Ticket <code>%s</code> has been closed.", id_short)
 
 	sendMessageToOrigin(text, nil, &role.ID, ticket.Creator, nil, nil, bot, db)
+	sendMessageToRoles(text, nil, ticket.Creator, nil, nil, bot, db)
+}
+
+func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: update.Message.From.ID},
+			Text:             "Please reply to a message to use this command.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+	user, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message.From.ID)
+		return
+	}
+
+	// if user.CanReopen == false {
+	// 	return
+	// }
+
+	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, user.ID)
+
+	ticket.ClosedBy = nil
+	ticket.DateClosed = nil
+
+	db.UpdateTicket(id, ticket)
+
+	var text string
+	if user.Onymity {
+		text = fmt.Sprintf("Ticket <code>%s</code> has been reopenned by Anon.", id_short)
+	} else {
+		text = fmt.Sprintf("Ticket <code>%s</code> has been reopenned by %s.", id_short, user.Fullname)
+	}
+
+	sendMessageToOrigin(text, nil, nil, ticket.Creator, nil, nil, bot, db)
 	sendMessageToRoles(text, nil, ticket.Creator, nil, nil, bot, db)
 }
 

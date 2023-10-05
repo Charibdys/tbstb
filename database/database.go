@@ -324,12 +324,6 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 func (db *Connection) GetTicketAndMessage(msid int, userID int64) (string, *Ticket, *Message) {
 	ticketColl := db.Client.Database("tbstb").Collection("tickets")
 
-	// type IDAndMessage struct {
-	// 	ID      primitive.ObjectID `bson:"_id"`
-	// 	Creator int64              `bson:"creator"`
-	// 	Message []Message          `bson:"messages"`
-	// }
-
 	var object Ticket
 
 	err := ticketColl.FindOne(context.Background(), bson.D{
