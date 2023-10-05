@@ -31,7 +31,8 @@ type Config struct {
 
 type User struct {
 	ID                 int64  `bson:"_id"`
-	Name               string `bson:"name"`
+	Username           string `bson:"username,omitempty"`
+	Fullname           string `bson:"fullname"`
 	Onymity            bool   `bson:"onymity"`
 	DisabledBroadcasts bool   `bson:"disabledBroadcasts"`
 	CanReopen          bool   `bson:"canReopen"`
@@ -49,14 +50,14 @@ type Ticket struct {
 	DateClosed  *time.Time         `bson:"dateClosed"`
 }
 
-// TODO: Add entry for unique media ID
 type Message struct {
-	Sender     int64      `bson:"sender"`
-	OriginMSID int        `bson:"originMSID"`
-	Receivers  []Receiver `bson:"receivers"`
-	DateSent   time.Time  `bson:"dateSent"`
-	Text       *string    `bson:"text"`
-	Media      *string    `bson:"media"`
+	Sender        int64      `bson:"sender"`
+	OriginMSID    int        `bson:"originMSID"`
+	Receivers     []Receiver `bson:"receivers"`
+	DateSent      time.Time  `bson:"dateSent"`
+	Text          *string    `bson:"text"`
+	Media         *string    `bson:"media"`
+	UniqueMediaID *string    `bson:"uniqueMediaID,omitempty"`
 }
 
 type Receiver struct {
@@ -65,18 +66,13 @@ type Receiver struct {
 }
 
 func Init() *Connection {
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	err = client.Connect(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	db := Connection{
 		Client: client,
@@ -118,25 +114,14 @@ func (db *Connection) CreateConfig() {
 func (db *Connection) CreateUser(id int64, username string, fullname string, config *Config) {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
-	var user User
-	if username != "" {
-		user = User{
-			ID:                 id,
-			Name:               username,
-			Onymity:            false,
-			DisabledBroadcasts: false,
-			CanReopen:          config.UserReopen,
-			Banned:             false,
-		}
-	} else {
-		user = User{
-			ID:                 id,
-			Name:               fullname,
-			Onymity:            false,
-			DisabledBroadcasts: false,
-			CanReopen:          config.UserReopen,
-			Banned:             false,
-		}
+	user := User{
+		ID:                 id,
+		Username:           username,
+		Fullname:           fullname,
+		Onymity:            false,
+		DisabledBroadcasts: false,
+		CanReopen:          config.UserReopen,
+		Banned:             false,
 	}
 
 	_, err := userColl.InsertOne(context.Background(), user)
@@ -167,12 +152,13 @@ func (db *Connection) CreateTicket(creator int64, msid int, text *string, media 
 		Assignees:   nil,
 		Messages: []Message{
 			{
-				Sender:     creator,
-				OriginMSID: msid,
-				DateSent:   time.Now(),
-				Receivers:  nil,
-				Text:       text,
-				Media:      media,
+				Sender:        creator,
+				OriginMSID:    msid,
+				DateSent:      time.Now(),
+				Receivers:     nil,
+				Text:          text,
+				Media:         media,
+				UniqueMediaID: media_unique,
 			},
 		},
 		ClosedBy:   nil,
@@ -335,33 +321,36 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 	return id, id[len(id)-7:], &ticket
 }
 
-func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int64, *Message) {
+func (db *Connection) GetTicketAndMessage(msid int, userID int64) (string, *Ticket, *Message) {
 	ticketColl := db.Client.Database("tbstb").Collection("tickets")
 
-	type IDAndMessage struct {
-		ID      primitive.ObjectID `bson:"_id"`
-		Creator int64              `bson:"creator"`
-		Message []Message          `bson:"messages"`
-	}
+	var object Ticket
 
-	var object IDAndMessage
-
-	err := ticketColl.FindOne(context.Background(), bson.D{},
+	err := ticketColl.FindOne(context.Background(), bson.D{
+		{Key: "messages.receivers.msid", Value: msid},
+		{Key: "messages.receivers.userID", Value: userID},
+	},
 		options.FindOne().SetProjection(bson.D{
+			{Key: "_id", Value: 1},
+			{Key: "creator", Value: 1},
+			{Key: "title", Value: 1},
+			{Key: "dateCreated", Value: 1},
+			{Key: "assignees", Value: 1},
 			{Key: "messages", Value: bson.D{
 				{Key: "$elemMatch", Value: bson.D{
-					{Key: "receivers.userID", Value: userID},
 					{Key: "receivers.msid", Value: msid},
-				}},
+					{Key: "receivers.userID", Value: userID},
+				},
+				},
 			}},
-			{Key: "creator", Value: 1},
-			{Key: "receivers", Value: 1},
+			{Key: "closedBy", Value: 1},
+			{Key: "dateClosed", Value: 1},
 		})).Decode(&object)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return object.ID.Hex(), object.Creator, &object.Message[0]
+	return object.ID.Hex(), &object, &object.Messages[0]
 }
 
 func (db *Connection) GetRole(id int64) (*Role, error) {
@@ -412,6 +401,23 @@ func (db *Connection) GetRoleIDs(exclude *int64) []int64 {
 	return ids
 }
 
+func (db *Connection) GetAllRoles() []Role {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	var roles []Role
+	cursor, err := roleColl.Find(context.Background(), bson.D{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cursor.All(context.Background(), &roles)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return roles
+}
+
 func (db *Connection) UpdateConfig(config *Config) *Config {
 	configColl := db.Client.Database("tbstb").Collection("config")
 
@@ -448,7 +454,8 @@ func (db *Connection) UpdateUser(user *User) {
 		bson.D{{
 			Key: "$set",
 			Value: bson.D{
-				{Key: "name", Value: user.Name},
+				{Key: "username", Value: user.Username},
+				{Key: "fullname", Value: user.Fullname},
 				{Key: "banned", Value: user.Banned},
 				{Key: "onymity", Value: user.Onymity},
 				{Key: "disabledBroadcasts", Value: user.DisabledBroadcasts},
@@ -502,6 +509,7 @@ func (db *Connection) AppendMessage(ticket_id string, message *Message) {
 				{Key: "dateSent", Value: message.DateSent},
 				{Key: "text", Value: message.Text},
 				{Key: "media", Value: message.Media},
+				{Key: "uniqueMediaID", Value: message.UniqueMediaID},
 			}}},
 		}},
 	)
@@ -585,7 +593,7 @@ func (db *Connection) HandleConfigError() *Config {
 }
 
 // Check if the required collections exist in the database.
-// If all or only some collections do not exit, create them.
+// If all or only some collections do not exist, create them.
 // Otherwise, ensure that the collections have the latest validation schema.
 func (db *Connection) CheckCollections() {
 	TBSTBDatabase := db.Client.Database("tbstb")
@@ -726,7 +734,11 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 						},
 						"media": bson.M{
 							"bsonType":    "string",
-							"description": "A file_id associated with the media in this message",
+							"description": "A file id associated with the media in this message",
+						},
+						"uniqueMediaID": bson.M{
+							"bsonType":    "string",
+							"description": "A unique file id associated with the media in this message",
 						},
 					},
 				},
@@ -751,9 +763,13 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 				"bsonType":    "long",
 				"description": "A user that interacts with the bot",
 			},
-			"name": bson.M{
+			"username": bson.M{
 				"bsonType":    "string",
-				"description": "Name of the user",
+				"description": "Username of the user",
+			},
+			"fullname": bson.M{
+				"bsonType":    "string",
+				"description": "Display name of the user",
 			},
 			"onymity": bson.M{
 				"bsonType":    "bool",
