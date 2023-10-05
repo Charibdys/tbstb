@@ -407,6 +407,23 @@ func (db *Connection) GetRoleIDs(exclude *int64) []int64 {
 	return ids
 }
 
+func (db *Connection) GetAllRoles() []Role {
+	roleColl := db.Client.Database("tbstb").Collection("roles")
+
+	var roles []Role
+	cursor, err := roleColl.Find(context.Background(), bson.D{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = cursor.All(context.Background(), &roles)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return roles
+}
+
 func (db *Connection) UpdateConfig(config *Config) *Config {
 	configColl := db.Client.Database("tbstb").Collection("config")
 

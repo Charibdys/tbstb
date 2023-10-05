@@ -53,6 +53,26 @@ func main() {
 		versionCommand(bot, &update, db)
 	}, th.CommandEqual("version"))
 
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		assignCommand(bot, &update, db)
+	}, th.CommandEqual("assign"))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		assignToTicket(bot, &query, db)
+	}, th.CallbackDataPrefix("assign_user="))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		nextAssignPage(bot, &query, db)
+	}, th.CallbackDataPrefix("next_assign_page="))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		prevAssignPage(bot, &query, db)
+	}, th.CallbackDataPrefix("prev_assign_page="))
+
+	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+		cancelAssign(bot, &query, db)
+	}, th.CallbackDataEqual("cancel_assign"))
+
 	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
 		messageHandler(bot, &message, db, config)
 	}, th.AnyMessage())
@@ -824,6 +844,156 @@ func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connect
 	})
 }
 
+func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: update.Message.From.ID},
+			Text:             "Please reply to a message to use this command.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+	_, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message.From.ID)
+		return
+	}
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		return
+	}
+
+	if !(role.RoleType == "owner" || role.RoleType == "admin") {
+		return
+	}
+
+	roles := db.GetAllRoles()
+
+	text := "Which user would you like to assign this ticket to?\n\n" +
+		"<b>Available Users</b>:\n\n"
+
+	var role_options []telego.InlineKeyboardButton
+
+	if roles != nil {
+		limit := 5
+		role_count := len(roles)
+
+		if role_count <= 5 {
+			limit = role_count
+		}
+
+		for i, role := range roles[:limit] {
+			// TODO: Add check for groups; use an anonymous identifier then
+			text += fmt.Sprintf("<b>%d.</b> %s\n", i+1, role.Name)
+
+			role_options = append(
+				role_options,
+				tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("assign_user=%d:%d", role.ID, reply_to.MessageID)),
+			)
+		}
+
+		if role_count > 5 {
+			role_options = append(role_options, tu.InlineKeyboardButton("➡️").WithCallbackData(fmt.Sprintf("next_assign_page=2:%d", reply_to.MessageID)))
+		}
+	}
+
+	if role_options == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: role.ID},
+			Text:             "There were no roles found to assign this ticket to.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+
+		return
+	}
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(role_options...),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_assign"),
+		),
+	)
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:           telego.ChatID{ID: role.ID},
+		Text:             text,
+		ReplyToMessageID: update.Message.MessageID,
+		ReplyMarkup:      markup,
+		ParseMode:        "HTML",
+	})
+}
+
+func assignToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+	reply_to := query.Message.ReplyToMessage
+	_, err := db.GetUser(reply_to.From.ID)
+	if err != nil {
+		noUser(bot, reply_to.From.ID)
+		return
+	}
+
+	role, err := db.GetRole(reply_to.From.ID)
+	if err != nil {
+		return
+	}
+
+	data := strings.Split(query.Data, "=")[1]
+	parameters := strings.Split(data, ":")
+
+	userID, err := strconv.ParseInt(parameters[0], 10, 64)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+	msid, err := strconv.Atoi(parameters[1])
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
+	assignee, err := db.GetRole(userID)
+	if err != nil {
+		return
+	}
+
+	if assignee.RoleType == "owner" && role.RoleType == "admin" {
+		return
+	}
+
+	id, id_short, ticket := db.GetTicketFromMSID(msid, reply_to.From.ID)
+
+	ticket.Assignees = append(ticket.Assignees, int64(userID))
+
+	db.UpdateTicket(id, ticket)
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            fmt.Sprintf("Assigned %s to ticket %s", assignee.Name, id_short),
+	})
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        fmt.Sprintf("Assigned %s to ticket <code>%s</code>.", assignee.Name, id_short),
+		ParseMode:   "HTML",
+		ReplyMarkup: nil,
+	})
+}
+
+func cancelAssign(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            "Canceled assigning ticket to user",
+	})
+
+	bot.DeleteMessage(&telego.DeleteMessageParams{
+		ChatID:    telego.ChatID{ID: query.From.ID},
+		MessageID: query.Message.MessageID,
+	})
+}
+
 func getMessageMediaID(message *telego.Message) (*string, *string) {
 	switch {
 	case message.Animation != nil:
@@ -985,7 +1155,143 @@ func prevPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connect
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
-func paginate(page int, page_size int, slice []string) []string {
+func nextAssignPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+	const page_size = 5
+
+	data := strings.Split(query.Data, "=")[1]
+	parameters := strings.Split(data, ":")
+
+	page := parameters[0]
+
+	page_number, err := strconv.Atoi(page)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+	msid, err := strconv.Atoi(parameters[1])
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
+	roles := db.GetAllRoles()
+
+	roles_page := paginate(page_number, page_size, roles)
+
+	text := "Which user would you like to assign this ticket to?\n\n" +
+		"<b>Available Users</b>:\n\n"
+
+	var role_options []telego.InlineKeyboardButton
+
+	role_options = append(
+		role_options,
+		tu.InlineKeyboardButton("⬅️").WithCallbackData(fmt.Sprintf("prev_assign_page=%d:%d", page_number-1, msid)),
+	)
+
+	for i, role := range roles_page {
+		// TODO: Add check for groups; use an anonymous identifier then
+		text += fmt.Sprintf("<b>%d.</b> %s\n", i+1, role.Name)
+
+		role_options = append(
+			role_options,
+			tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("assign_user=%d:%d", role.ID, msid)),
+		)
+	}
+
+	if len(roles) > (page_number)*page_size {
+		role_options = append(
+			role_options,
+			tu.InlineKeyboardButton("➡️").WithCallbackData(fmt.Sprintf("next_assign_page=%d:%d", page_number+1, msid)),
+		)
+	}
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(role_options...),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_assign"),
+		),
+	)
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: markup,
+	})
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+}
+
+func prevAssignPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+	const page_size = 5
+
+	data := strings.Split(query.Data, "=")[1]
+	parameters := strings.Split(data, ":")
+
+	page := parameters[0]
+
+	page_number, err := strconv.Atoi(page)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+	msid, err := strconv.Atoi(parameters[1])
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
+	roles := db.GetAllRoles()
+
+	roles_page := paginate(page_number, page_size, roles)
+
+	text := "Which user would you like to assign this ticket to?\n\n" +
+		"<b>Available Users</b>:\n\n"
+
+	var role_options []telego.InlineKeyboardButton
+
+	if page_number != 1 {
+		role_options = append(
+			role_options,
+			tu.InlineKeyboardButton("⬅️").WithCallbackData(fmt.Sprintf("prev_assign_page=%d:%d", page_number-1, msid)),
+		)
+	}
+
+	for i, role := range roles_page {
+		// TODO: Add check for groups; use an anonymous identifier then
+		text += fmt.Sprintf("<b>%d.</b> %s\n", i+1, role.Name)
+
+		role_options = append(
+			role_options,
+			tu.InlineKeyboardButton(fmt.Sprintf("%d", i+1)).WithCallbackData(fmt.Sprintf("assign_user=%d:%d", role.ID, msid)),
+		)
+	}
+
+	role_options = append(
+		role_options,
+		tu.InlineKeyboardButton("➡️").WithCallbackData(fmt.Sprintf("next_assign_page=%d:%d", page_number+1, msid)),
+	)
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(role_options...),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_assign"),
+		),
+	)
+
+	bot.EditMessageText(&telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: query.From.ID},
+		MessageID:   query.Message.MessageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: markup,
+	})
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+}
+
+func paginate[T any](page int, page_size int, slice []T) []T {
 	if page == 0 {
 		return nil
 	}
@@ -996,7 +1302,7 @@ func paginate(page int, page_size int, slice []string) []string {
 	}
 
 	offset := ((page - 1) * page_size)
-	var paged_slice []string
+	var paged_slice []T
 
 	paged_slice = append(paged_slice, slice[offset:offset+(limit)]...)
 
