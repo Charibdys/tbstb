@@ -66,18 +66,13 @@ type Receiver struct {
 }
 
 func Init() *Connection {
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	err = client.Connect(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	db := Connection{
 		Client: client,
@@ -326,16 +321,16 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 	return id, id[len(id)-7:], &ticket
 }
 
-func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int64, *Message) {
+func (db *Connection) GetTicketAndMessage(msid int, userID int64) (string, *Ticket, *Message) {
 	ticketColl := db.Client.Database("tbstb").Collection("tickets")
 
-	type IDAndMessage struct {
-		ID      primitive.ObjectID `bson:"_id"`
-		Creator int64              `bson:"creator"`
-		Message []Message          `bson:"messages"`
-	}
+	// type IDAndMessage struct {
+	// 	ID      primitive.ObjectID `bson:"_id"`
+	// 	Creator int64              `bson:"creator"`
+	// 	Message []Message          `bson:"messages"`
+	// }
 
-	var object IDAndMessage
+	var object Ticket
 
 	err := ticketColl.FindOne(context.Background(), bson.D{
 		{Key: "messages.receivers.msid", Value: msid},
@@ -344,6 +339,9 @@ func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int
 		options.FindOne().SetProjection(bson.D{
 			{Key: "_id", Value: 1},
 			{Key: "creator", Value: 1},
+			{Key: "title", Value: 1},
+			{Key: "dateCreated", Value: 1},
+			{Key: "assignees", Value: 1},
 			{Key: "messages", Value: bson.D{
 				{Key: "$elemMatch", Value: bson.D{
 					{Key: "receivers.msid", Value: msid},
@@ -351,12 +349,14 @@ func (db *Connection) GetTicketIDAndMessage(msid int, userID int64) (string, int
 				},
 				},
 			}},
+			{Key: "closedBy", Value: 1},
+			{Key: "dateClosed", Value: 1},
 		})).Decode(&object)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return object.ID.Hex(), object.Creator, &object.Message[0]
+	return object.ID.Hex(), &object, &object.Messages[0]
 }
 
 func (db *Connection) GetRole(id int64) (*Role, error) {

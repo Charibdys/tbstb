@@ -54,6 +54,10 @@ func main() {
 	}, th.CommandEqual("version"))
 
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		closeCommand(bot, &update, db)
+	}, th.CommandEqual("close"))
+
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		assignCommand(bot, &update, db)
 	}, th.CommandEqual("assign"))
 
@@ -174,7 +178,18 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		text = message.Caption
 	}
 
-	id, creator, reply_message := db.GetTicketIDAndMessage(message.ReplyToMessage.MessageID, user.ID)
+	id, ticket, reply_message := db.GetTicketAndMessage(message.ReplyToMessage.MessageID, user.ID)
+
+	if ticket.ClosedBy != nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: user.ID},
+			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
+			ReplyToMessageID: message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+
 	reply_to := reply_message.GetMessageReceivers()
 	id_short := id[len(id)-7:]
 	media, uniqueMediaID := getMessageMediaID(message)
@@ -185,11 +200,16 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
 		fmt_text = formatRoleMessage(text, user, role, id_short)
-		receivers = sendMessageToOrigin(fmt_text, media, &role.ID, creator, reply_to, message, bot, db)
+		receivers = sendMessageToOrigin(fmt_text, media, &role.ID, ticket.Creator, reply_to, message, bot, db)
 	} else {
 		fmt_text = formatMessage(text, user, id_short)
-		receivers = sendMessageToRoles(fmt_text, media, creator, reply_to, message, bot, db)
+		receivers = sendMessageToRoles(fmt_text, media, ticket.Creator, reply_to, message, bot, db)
 	}
+
+	receivers = append(receivers, database.Receiver{
+		MSID:   message.MessageID,
+		UserID: user.ID,
+	})
 
 	db.AppendMessage(id, &database.Message{
 		Sender:        user.ID,
@@ -696,6 +716,22 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 
 	ticketID := strings.Split(query.Data, "=")[1]
 
+	ticket, err := db.GetTicket(ticketID)
+	if err != nil {
+		return
+	}
+
+	if ticket.ClosedBy != nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: user.ID},
+			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", ticketID[len(ticketID)-7:]),
+			ReplyToMessageID: query.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+
 	var text string
 	if reply_to.Text != "" {
 		text = reply_to.Text
@@ -714,6 +750,11 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 	}
 
 	receivers := sendMessageToRoles(fmt_text, media, user.ID, nil, reply_to, bot, db)
+
+	receivers = append(receivers, database.Receiver{
+		MSID:   reply_to.MessageID,
+		UserID: user.ID,
+	})
 
 	db.AppendMessage(ticketID, &database.Message{
 		Sender:        user.ID,
@@ -842,6 +883,46 @@ func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connect
 		DisableWebPagePreview: false,
 		ParseMode:             "HTML",
 	})
+}
+
+func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: update.Message.From.ID},
+			Text:             "Please reply to a message to use this command.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+	_, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message.From.ID)
+		return
+	}
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		return
+	}
+
+	if !(role.RoleType == "owner" || role.RoleType == "admin") {
+		return
+	}
+
+	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, reply_to.From.ID)
+
+	ticket.ClosedBy = &role.ID
+
+	closed_time := time.Now()
+	ticket.DateClosed = &closed_time
+
+	db.UpdateTicket(id, ticket)
+
+	text := fmt.Sprintf("Ticket <code>%s</code> has been closed.", id_short)
+
+	sendMessageToOrigin(text, nil, &role.ID, ticket.Creator, nil, nil, bot, db)
+	sendMessageToRoles(text, nil, ticket.Creator, nil, nil, bot, db)
 }
 
 func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
