@@ -15,6 +15,16 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 )
 
+type RelayParams struct {
+	Text      string
+	Media     *string
+	Entities  []telego.MessageEntity
+	Users     []int64
+	Reply     map[int64]int
+	ParseMode string
+	Message   *telego.Message
+}
+
 func main() {
 	botToken := os.Getenv("TOKEN")
 
@@ -207,15 +217,15 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	id_short := id[len(id)-7:]
 	media, uniqueMediaID := getMessageMediaID(message)
 
-	var fmt_text string
+	var fmtText string
 	var receivers []int64
 
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
-		fmt_text = formatRoleMessage(text, user, role, id_short)
+		fmtText = formatRoleMessage(text, user, role, id_short)
 		receivers = db.GetOriginReceivers(&role.ID, ticket.Creator)
 	} else {
-		fmt_text = formatMessage(text, user, id_short)
+		fmtText = formatMessage(text, user, id_short)
 		if ticket.Assignees != nil {
 			receivers = db.GetAssigneeReceivers(ticket.Assignees)
 		} else {
@@ -223,7 +233,14 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		}
 	}
 
-	confirmedReceivers := sendMessage(fmt_text, media, receivers, reply_to, message, bot)
+	confirmedReceivers := sendMessage(&RelayParams{
+		Text:      fmtText,
+		Media:     media,
+		Users:     receivers,
+		Reply:     reply_to,
+		ParseMode: "HTML",
+		Message:   message,
+	}, bot)
 
 	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   message.MessageID,
@@ -263,306 +280,118 @@ func formatRoleMessage(text string, user *database.User, role *database.Role, ti
 	return text
 }
 
-func sendMessage(text string, media *string, users []int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot) []database.Receiver {
+func sendMessage(params *RelayParams, bot *telego.Bot) []database.Receiver {
 	var receivers []database.Receiver
 
-	if reply_to == nil {
-		for _, roleID := range users {
-			msg := relay(roleID, text, media, message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: roleID,
-			})
+	for _, roleID := range params.Users {
+		msg := relay(roleID, params, bot)
+		if msg == nil {
+			continue
 		}
-	} else {
-		for _, roleID := range users {
-			msg := relayWithReply(roleID, text, media, reply_to[roleID], message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: roleID,
-			})
-		}
+		receivers = append(receivers, database.Receiver{
+			MSID:   msg.MessageID,
+			UserID: roleID,
+		})
 	}
 
 	return receivers
 }
 
-func relay(id int64, text string, media *string, message *telego.Message, bot *telego.Bot) *telego.Message {
+func relay(id int64, params *RelayParams, bot *telego.Bot) *telego.Message {
 	var msg *telego.Message
-	if media == nil {
-		var err error
-		msg, err = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:    telego.ChatID{ID: id},
-			Text:      text,
-			ParseMode: "HTML",
-		})
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
-	} else {
-		switch {
-		case message.Animation != nil:
-			msg, _ = bot.SendAnimation(&telego.SendAnimationParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Animation: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		case message.Document != nil:
-			msg, _ = bot.SendDocument(&telego.SendDocumentParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Document: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		case message.Sticker != nil:
-			msg, _ = bot.SendSticker(&telego.SendStickerParams{
-				ChatID: telego.ChatID{ID: id},
-				Sticker: telego.InputFile{
-					FileID: *media,
-				},
-			})
-		case message.Video != nil:
-			msg, _ = bot.SendVideo(&telego.SendVideoParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Video: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		case message.VideoNote != nil:
-			msg, _ = bot.SendVideoNote(&telego.SendVideoNoteParams{
-				ChatID: telego.ChatID{ID: id},
-				VideoNote: telego.InputFile{
-					FileID: *media,
-				},
-			})
-		case message.Audio != nil:
-			msg, _ = bot.SendAudio(&telego.SendAudioParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Audio: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		case message.Photo != nil:
-			msg, _ = bot.SendPhoto(&telego.SendPhotoParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Photo: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		case message.Voice != nil:
-			msg, _ = bot.SendVoice(&telego.SendVoiceParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Voice: telego.InputFile{
-					FileID: *media,
-				},
-				ParseMode: "HTML",
-			})
-		default:
-			return nil
-		}
-	}
-
-	return msg
-}
-
-func relayWithEntities(id int64, text string, entities []telego.MessageEntity, media *string, message *telego.Message, bot *telego.Bot) *telego.Message {
-	var msg *telego.Message
-	if media == nil {
-		var err error
-		msg, err = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:   telego.ChatID{ID: id},
-			Text:     text,
-			Entities: entities,
-		})
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
-	} else {
-		switch {
-		case message.Animation != nil:
-			msg, _ = bot.SendAnimation(&telego.SendAnimationParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Animation: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		case message.Document != nil:
-			msg, _ = bot.SendDocument(&telego.SendDocumentParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Document: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		case message.Sticker != nil:
-			msg, _ = bot.SendSticker(&telego.SendStickerParams{
-				ChatID: telego.ChatID{ID: id},
-				Sticker: telego.InputFile{
-					FileID: *media,
-				},
-			})
-		case message.Video != nil:
-			msg, _ = bot.SendVideo(&telego.SendVideoParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Video: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		case message.VideoNote != nil:
-			msg, _ = bot.SendVideoNote(&telego.SendVideoNoteParams{
-				ChatID: telego.ChatID{ID: id},
-				VideoNote: telego.InputFile{
-					FileID: *media,
-				},
-			})
-		case message.Audio != nil:
-			msg, _ = bot.SendAudio(&telego.SendAudioParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Audio: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		case message.Photo != nil:
-			msg, _ = bot.SendPhoto(&telego.SendPhotoParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Photo: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		case message.Voice != nil:
-			msg, _ = bot.SendVoice(&telego.SendVoiceParams{
-				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
-				Voice: telego.InputFile{
-					FileID: *media,
-				},
-				CaptionEntities: entities,
-			})
-		default:
-			return nil
-		}
-	}
-
-	return msg
-}
-
-func relayWithReply(id int64, text string, media *string, reply_to int, message *telego.Message, bot *telego.Bot) *telego.Message {
-	var msg *telego.Message
-	if media == nil {
+	if params.Media == nil {
 		var err error
 		msg, err = bot.SendMessage(&telego.SendMessageParams{
 			ChatID:           telego.ChatID{ID: id},
-			Text:             text,
-			ReplyToMessageID: reply_to,
-			ParseMode:        "HTML",
+			Text:             params.Text,
+			ParseMode:        params.ParseMode,
+			Entities:         params.Entities,
+			ReplyToMessageID: params.Reply[id],
 		})
 		if err != nil {
 			fmt.Printf("%s\n", err)
 		}
 	} else {
 		switch {
-		case message.Animation != nil:
+		case params.Message.Animation != nil:
 			msg, _ = bot.SendAnimation(&telego.SendAnimationParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Animation: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
-		case message.Document != nil:
+		case params.Message.Document != nil:
 			msg, _ = bot.SendDocument(&telego.SendDocumentParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Document: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
-		case message.Sticker != nil:
+		case params.Message.Sticker != nil:
 			msg, _ = bot.SendSticker(&telego.SendStickerParams{
 				ChatID: telego.ChatID{ID: id},
 				Sticker: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
 			})
-		case message.Video != nil:
+		case params.Message.Video != nil:
 			msg, _ = bot.SendVideo(&telego.SendVideoParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Video: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
-		case message.VideoNote != nil:
+		case params.Message.VideoNote != nil:
 			msg, _ = bot.SendVideoNote(&telego.SendVideoNoteParams{
 				ChatID: telego.ChatID{ID: id},
 				VideoNote: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
 			})
-		case message.Audio != nil:
+		case params.Message.Audio != nil:
 			msg, _ = bot.SendAudio(&telego.SendAudioParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Audio: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
-		case message.Photo != nil:
+		case params.Message.Photo != nil:
 			msg, _ = bot.SendPhoto(&telego.SendPhotoParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Photo: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
-		case message.Voice != nil:
+		case params.Message.Voice != nil:
 			msg, _ = bot.SendVoice(&telego.SendVoiceParams{
 				ChatID:  telego.ChatID{ID: id},
-				Caption: text,
+				Caption: params.Text,
 				Voice: telego.InputFile{
-					FileID: *media,
+					FileID: *params.Media,
 				},
-				ReplyToMessageID: reply_to,
-				ParseMode:        "HTML",
+				ParseMode:        params.ParseMode,
+				CaptionEntities:  params.Entities,
+				ReplyToMessageID: params.Reply[id],
 			})
 		default:
 			return nil
@@ -651,16 +480,23 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 
 	id, id_short, ticket := db.CreateTicket(reply_to.From.ID, reply_to.MessageID, &text, media, media_unique)
 
-	var fmt_text string
+	var fmtText string
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
-		fmt_text = formatRoleMessage(text, user, role, id_short)
+		fmtText = formatRoleMessage(text, user, role, id_short)
 	} else {
-		fmt_text = formatMessage(text, user, id_short)
+		fmtText = formatMessage(text, user, id_short)
 	}
 
 	receivers := db.GetRoleReceivers(&user.ID)
-	confirmedReceivers := sendMessage(fmt_text, media, receivers, nil, reply_to, bot)
+
+	confirmedReceivers := sendMessage(&RelayParams{
+		Text:      fmtText,
+		Media:     media,
+		Users:     receivers,
+		ParseMode: "HTML",
+		Message:   reply_to,
+	}, bot)
 
 	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   reply_to.MessageID,
@@ -732,12 +568,12 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 
 	media, media_unique := getMessageMediaID(reply_to)
 
-	var fmt_text string
+	var fmtText string
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
-		fmt_text = formatRoleMessage(text, user, role, ticketID[len(ticketID)-7:])
+		fmtText = formatRoleMessage(text, user, role, ticketID[len(ticketID)-7:])
 	} else {
-		fmt_text = formatMessage(text, user, ticketID[len(ticketID)-7:])
+		fmtText = formatMessage(text, user, ticketID[len(ticketID)-7:])
 	}
 
 	var receivers []int64
@@ -747,7 +583,13 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 		receivers = db.GetRoleReceivers(&user.ID)
 	}
 
-	confirmedReceivers := sendMessage(fmt_text, media, receivers, nil, reply_to, bot)
+	confirmedReceivers := sendMessage(&RelayParams{
+		Text:      fmtText,
+		Media:     media,
+		Users:     receivers,
+		ParseMode: "HTML",
+		Message:   reply_to,
+	}, bot)
 
 	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   reply_to.MessageID,
@@ -824,7 +666,7 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 		return
 	}
 
-	users := db.GetBroadcastableUsers()
+	users := db.GetBroadcastableUsers(&role.ID)
 	if users == nil {
 		return
 	}
@@ -846,16 +688,15 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 
 	message_media, _ := getMessageMediaID(update.Message)
 
-	var count int32 = 0
-	for _, user := range *users {
-		if user == role.ID {
-			continue
-		}
-		message := relayWithEntities(user, text, updatedEntities, message_media, update.Message, bot)
-		if message != nil {
-			count++
-		}
-	}
+	confirmedReceivers := sendMessage(&RelayParams{
+		Text:     text,
+		Media:    message_media,
+		Entities: updatedEntities,
+		Users:    *users,
+		Message:  update.Message,
+	}, bot)
+
+	count := len(confirmedReceivers)
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
 		ChatID:           telego.ChatID{ID: role.ID},
@@ -930,7 +771,14 @@ func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 
 	receivers := db.GetOriginReceivers(&role.ID, ticket.Creator)
 
-	sendMessage(text, nil, receivers, nil, nil, bot)
+	sendMessage(&RelayParams{
+		Text:      text,
+		Media:     nil,
+		Users:     receivers,
+		Reply:     nil,
+		ParseMode: "HTML",
+		Message:   update.Message,
+	}, bot)
 }
 
 func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
@@ -979,7 +827,14 @@ func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connecti
 
 	receivers := db.GetOriginReceivers(&user.ID, ticket.Creator)
 
-	sendMessage(text, nil, receivers, nil, nil, bot)
+	sendMessage(&RelayParams{
+		Text:      text,
+		Media:     nil,
+		Users:     receivers,
+		Reply:     nil,
+		ParseMode: "HTML",
+		Message:   update.Message,
+	}, bot)
 }
 
 func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {

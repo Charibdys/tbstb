@@ -220,10 +220,13 @@ func (db *Connection) GetUser(id int64) (*User, error) {
 	return &user, nil
 }
 
-func (db *Connection) GetBroadcastableUsers() *[]int64 {
+func (db *Connection) GetBroadcastableUsers(excludeID *int64) *[]int64 {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
 	filter := bson.D{
+		{Key: "_id", Value: bson.D{
+			{Key: "$ne", Value: excludeID},
+		}},
 		{Key: "disabledBroadcasts", Value: false},
 		{Key: "banned", Value: false},
 	}
