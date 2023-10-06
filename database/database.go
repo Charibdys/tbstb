@@ -313,7 +313,7 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 		{Key: "messages.receivers.userID", Value: userID},
 	}).Decode(&ticket)
 	if err != nil {
-		log.Fatal(err)
+		return "", "", nil
 	}
 
 	id := ticket.ID.Hex()
@@ -347,7 +347,7 @@ func (db *Connection) GetTicketAndMessage(msid int, userID int64) (string, *Tick
 			{Key: "dateClosed", Value: 1},
 		})).Decode(&object)
 	if err != nil {
-		log.Fatal(err)
+		return "", nil, nil
 	}
 
 	return object.ID.Hex(), &object, &object.Messages[0]

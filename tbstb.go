@@ -183,6 +183,15 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	}
 
 	id, ticket, reply_message := db.GetTicketAndMessage(message.ReplyToMessage.MessageID, user.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: user.ID},
+			Text:             "This ticket or message does not exist.",
+			ReplyToMessageID: message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
 
 	if ticket.ClosedBy != nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
@@ -199,7 +208,6 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	media, uniqueMediaID := getMessageMediaID(message)
 
 	var fmt_text string
-	var confirmedReceivers []database.Receiver
 	var receivers []int64
 
 	role, _ := db.GetRole(user.ID)
@@ -215,7 +223,7 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		}
 	}
 
-	sendMessage(fmt_text, media, receivers, reply_to, message, bot)
+	confirmedReceivers := sendMessage(fmt_text, media, receivers, reply_to, message, bot)
 
 	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   message.MessageID,
@@ -654,6 +662,11 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 	receivers := db.GetRoleReceivers(&user.ID)
 	confirmedReceivers := sendMessage(fmt_text, media, receivers, nil, reply_to, bot)
 
+	confirmedReceivers = append(confirmedReceivers, database.Receiver{
+		MSID:   reply_to.MessageID,
+		UserID: user.ID,
+	})
+
 	ticket.Messages[0].Receivers = confirmedReceivers
 
 	db.UpdateTicket(id, ticket)
@@ -895,7 +908,16 @@ func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 		return
 	}
 
-	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, reply_to.From.ID)
+	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, role.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: role.ID},
+			Text:             "This ticket or message does not exist.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
 
 	ticket.ClosedBy = &role.ID
 
@@ -933,6 +955,15 @@ func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connecti
 	// }
 
 	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, user.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: user.ID},
+			Text:             "This ticket or message does not exist.",
+			ReplyToMessageID: update.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
 
 	ticket.ClosedBy = nil
 	ticket.DateClosed = nil
@@ -1070,6 +1101,15 @@ func assignToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.C
 	}
 
 	id, id_short, ticket := db.GetTicketFromMSID(msid, reply_to.From.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: role.ID},
+			Text:             "This ticket or message does not exist.",
+			ReplyToMessageID: query.Message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
 
 	ticket.Assignees = append(ticket.Assignees, int64(userID))
 
