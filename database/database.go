@@ -418,6 +418,30 @@ func (db *Connection) GetAllRoles() []Role {
 	return roles
 }
 
+func (db *Connection) GetRoleReceivers(excludeSender *int64) []int64 {
+	users := db.GetRoleIDs(excludeSender)
+
+	return users
+}
+
+func (db *Connection) GetOriginReceivers(excludeRole *int64, origin int64) []int64 {
+	users := db.GetRoleIDs(excludeRole)
+	users = append(users, origin)
+
+	return users
+}
+
+func (db *Connection) GetAssigneeReceivers(users []int64) []int64 {
+	roles := db.GetAllRoles()
+	for _, role := range roles {
+		if role.RoleType == "owner" {
+			users = append(users, role.ID)
+		}
+	}
+
+	return users
+}
+
 func (db *Connection) UpdateConfig(config *Config) *Config {
 	configColl := db.Client.Database("tbstb").Collection("config")
 

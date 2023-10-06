@@ -199,22 +199,25 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 	media, uniqueMediaID := getMessageMediaID(message)
 
 	var fmt_text string
-	var receivers []database.Receiver
+	var confirmedReceivers []database.Receiver
+	var receivers []int64
 
 	role, _ := db.GetRole(user.ID)
 	if role != nil {
 		fmt_text = formatRoleMessage(text, user, role, id_short)
-		receivers = sendMessageToOrigin(fmt_text, media, &role.ID, ticket.Creator, reply_to, message, bot, db)
+		receivers = db.GetOriginReceivers(&role.ID, ticket.Creator)
 	} else {
 		fmt_text = formatMessage(text, user, id_short)
 		if ticket.Assignees != nil {
-			receivers = sendMessageToAssignees(fmt_text, media, ticket.Assignees, reply_to, message, bot, db)
+			receivers = db.GetAssigneeReceivers(ticket.Assignees)
 		} else {
-			receivers = sendMessageToRoles(fmt_text, media, ticket.Creator, reply_to, message, bot, db)
+			receivers = db.GetRoleReceivers(&ticket.Creator)
 		}
 	}
 
-	receivers = append(receivers, database.Receiver{
+	sendMessage(fmt_text, media, receivers, reply_to, message, bot)
+
+	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   message.MessageID,
 		UserID: user.ID,
 	})
@@ -223,7 +226,7 @@ func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Conne
 		Sender:        user.ID,
 		OriginMSID:    message.MessageID,
 		DateSent:      time.Now(),
-		Receivers:     receivers,
+		Receivers:     confirmedReceivers,
 		Text:          &text,
 		Media:         media,
 		UniqueMediaID: uniqueMediaID,
@@ -252,12 +255,11 @@ func formatRoleMessage(text string, user *database.User, role *database.Role, ti
 	return text
 }
 
-func sendMessageToRoles(text string, media *string, sender int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	roles := db.GetRoleIDs(&sender)
-
+func sendMessage(text string, media *string, users []int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot) []database.Receiver {
 	var receivers []database.Receiver
+
 	if reply_to == nil {
-		for _, roleID := range roles {
+		for _, roleID := range users {
 			msg := relay(roleID, text, media, message, bot)
 			if msg == nil {
 				continue
@@ -268,7 +270,7 @@ func sendMessageToRoles(text string, media *string, sender int64, reply_to map[i
 			})
 		}
 	} else {
-		for _, roleID := range roles {
+		for _, roleID := range users {
 			msg := relayWithReply(roleID, text, media, reply_to[roleID], message, bot)
 			if msg == nil {
 				continue
@@ -276,74 +278,6 @@ func sendMessageToRoles(text string, media *string, sender int64, reply_to map[i
 			receivers = append(receivers, database.Receiver{
 				MSID:   msg.MessageID,
 				UserID: roleID,
-			})
-		}
-	}
-
-	return receivers
-}
-
-func sendMessageToOrigin(text string, media *string, role *int64, origin int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	users := db.GetRoleIDs(role)
-	users = append(users, origin)
-
-	var receivers []database.Receiver
-	if reply_to == nil {
-		for _, userID := range users {
-			msg := relay(userID, text, media, message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: userID,
-			})
-		}
-	} else {
-		for _, userID := range users {
-			msg := relayWithReply(userID, text, media, reply_to[userID], message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: userID,
-			})
-		}
-	}
-
-	return receivers
-}
-
-func sendMessageToAssignees(text string, media *string, users []int64, reply_to map[int64]int, message *telego.Message, bot *telego.Bot, db *database.Connection) []database.Receiver {
-	roles := db.GetAllRoles()
-	for _, role := range roles {
-		if role.RoleType == "owner" {
-			users = append(users, role.ID)
-		}
-	}
-
-	var receivers []database.Receiver
-	if reply_to == nil {
-		for _, userID := range users {
-			msg := relay(userID, text, media, message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: userID,
-			})
-		}
-	} else {
-		for _, userID := range users {
-			msg := relayWithReply(userID, text, media, reply_to[userID], message, bot)
-			if msg == nil {
-				continue
-			}
-			receivers = append(receivers, database.Receiver{
-				MSID:   msg.MessageID,
-				UserID: userID,
 			})
 		}
 	}
@@ -717,10 +651,10 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 		fmt_text = formatMessage(text, user, id_short)
 	}
 
-	ticket.Messages[0].Receivers = append(
-		ticket.Messages[0].Receivers,
-		sendMessageToRoles(fmt_text, media, user.ID, nil, reply_to, bot, db)...,
-	)
+	receivers := db.GetRoleReceivers(&user.ID)
+	confirmedReceivers := sendMessage(fmt_text, media, receivers, nil, reply_to, bot)
+
+	ticket.Messages[0].Receivers = confirmedReceivers
 
 	db.UpdateTicket(id, ticket)
 
@@ -793,14 +727,16 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 		fmt_text = formatMessage(text, user, ticketID[len(ticketID)-7:])
 	}
 
-	var receivers []database.Receiver
+	var receivers []int64
 	if ticket.Assignees != nil {
-		receivers = sendMessageToAssignees(fmt_text, media, ticket.Assignees, nil, reply_to, bot, db)
+		receivers = db.GetAssigneeReceivers(ticket.Assignees)
 	} else {
-		receivers = sendMessageToRoles(fmt_text, media, user.ID, nil, reply_to, bot, db)
+		receivers = db.GetRoleReceivers(&user.ID)
 	}
 
-	receivers = append(receivers, database.Receiver{
+	confirmedReceivers := sendMessage(fmt_text, media, receivers, nil, reply_to, bot)
+
+	confirmedReceivers = append(confirmedReceivers, database.Receiver{
 		MSID:   reply_to.MessageID,
 		UserID: user.ID,
 	})
@@ -809,7 +745,7 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 		Sender:        user.ID,
 		OriginMSID:    query.Message.MessageID,
 		DateSent:      time.Now(),
-		Receivers:     receivers,
+		Receivers:     confirmedReceivers,
 		Text:          &text,
 		Media:         media,
 		UniqueMediaID: media_unique,
@@ -970,8 +906,9 @@ func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 
 	text := fmt.Sprintf("Ticket <code>%s</code> has been closed.", id_short)
 
-	sendMessageToOrigin(text, nil, &role.ID, ticket.Creator, nil, nil, bot, db)
-	sendMessageToRoles(text, nil, ticket.Creator, nil, nil, bot, db)
+	receivers := db.GetOriginReceivers(&role.ID, ticket.Creator)
+
+	sendMessage(text, nil, receivers, nil, nil, bot)
 }
 
 func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
@@ -1009,8 +946,9 @@ func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connecti
 		text = fmt.Sprintf("Ticket <code>%s</code> has been reopenned by %s.", id_short, user.Fullname)
 	}
 
-	sendMessageToOrigin(text, nil, nil, ticket.Creator, nil, nil, bot, db)
-	sendMessageToRoles(text, nil, ticket.Creator, nil, nil, bot, db)
+	receivers := db.GetOriginReceivers(&user.ID, ticket.Creator)
+
+	sendMessage(text, nil, receivers, nil, nil, bot)
 }
 
 func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
