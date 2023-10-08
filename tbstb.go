@@ -712,7 +712,7 @@ func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connect
 		return
 	}
 
-	version := "0.3"
+	version := "0.3.1"
 	source := "github.com/Charibdys/tbstb"
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
