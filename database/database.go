@@ -220,10 +220,13 @@ func (db *Connection) GetUser(id int64) (*User, error) {
 	return &user, nil
 }
 
-func (db *Connection) GetBroadcastableUsers() *[]int64 {
+func (db *Connection) GetBroadcastableUsers(excludeID *int64) *[]int64 {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
 	filter := bson.D{
+		{Key: "_id", Value: bson.D{
+			{Key: "$ne", Value: excludeID},
+		}},
 		{Key: "disabledBroadcasts", Value: false},
 		{Key: "banned", Value: false},
 	}
@@ -313,7 +316,7 @@ func (db *Connection) GetTicketFromMSID(msid int, userID int64) (string, string,
 		{Key: "messages.receivers.userID", Value: userID},
 	}).Decode(&ticket)
 	if err != nil {
-		log.Fatal(err)
+		return "", "", nil
 	}
 
 	id := ticket.ID.Hex()
@@ -347,7 +350,7 @@ func (db *Connection) GetTicketAndMessage(msid int, userID int64) (string, *Tick
 			{Key: "dateClosed", Value: 1},
 		})).Decode(&object)
 	if err != nil {
-		log.Fatal(err)
+		return "", nil, nil
 	}
 
 	return object.ID.Hex(), &object, &object.Messages[0]
@@ -416,6 +419,30 @@ func (db *Connection) GetAllRoles() []Role {
 	}
 
 	return roles
+}
+
+func (db *Connection) GetRoleReceivers(excludeSender *int64) []int64 {
+	users := db.GetRoleIDs(excludeSender)
+
+	return users
+}
+
+func (db *Connection) GetOriginReceivers(excludeRole *int64, origin int64) []int64 {
+	users := db.GetRoleIDs(excludeRole)
+	users = append(users, origin)
+
+	return users
+}
+
+func (db *Connection) GetAssigneeReceivers(users []int64) []int64 {
+	roles := db.GetAllRoles()
+	for _, role := range roles {
+		if role.RoleType == "owner" {
+			users = append(users, role.ID)
+		}
+	}
+
+	return users
 }
 
 func (db *Connection) UpdateConfig(config *Config) *Config {
