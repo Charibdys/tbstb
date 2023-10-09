@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,22 @@ type RelayParams struct {
 	Reply     map[int64]int
 	ParseMode string
 	Message   *telego.Message
+}
+
+func AddedToGroup(bot *telego.Bot) th.Predicate {
+	return func(update telego.Update) bool {
+		if update.Message == nil {
+			return false
+		}
+
+		botUser, _ := bot.GetMe()
+		for _, user := range update.Message.NewChatMembers {
+			if user.ID == botUser.ID {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func main() {
@@ -74,6 +91,10 @@ func main() {
 	bh.Handle(func(bot *telego.Bot, update telego.Update) {
 		assignCommand(bot, &update, db)
 	}, th.CommandEqual("assign"))
+
+	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+		registerGroup(bot, &update, db, config)
+	}, AddedToGroup(bot))
 
 	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
 		assignToTicket(bot, &query, db)
@@ -163,6 +184,38 @@ func startCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 			ParseMode: "HTML",
 		})
 	}
+}
+
+func registerGroup(bot *telego.Bot, update *telego.Update, db *database.Connection, config *database.Config) {
+	admins, err := bot.GetChatAdministrators(&telego.GetChatAdministratorsParams{
+		ChatID: telego.ChatID{ID: update.Message.Chat.ID},
+	})
+	if err != nil {
+		return
+	}
+
+	roles := db.GetAllRoles()
+
+	var ownerRoles []int64
+	for _, role := range roles {
+		if role.RoleType == "owner" {
+			ownerRoles = append(ownerRoles, role.ID)
+		}
+	}
+
+	var ownerInChat bool
+	for _, admin := range admins {
+		if admin.MemberStatus() == "creator" && slices.Contains(ownerRoles, admin.MemberUser().ID) {
+			ownerInChat = true
+		}
+	}
+
+	if !ownerInChat {
+		return
+	}
+
+	config.Groups = append(config.Groups, update.Message.Chat.ID)
+	db.UpdateConfig(config)
 }
 
 func noUser(bot *telego.Bot, userID int64) {

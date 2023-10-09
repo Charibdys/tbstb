@@ -24,9 +24,10 @@ type Role struct {
 	RoleType string `bson:"role"`
 }
 type Config struct {
-	Onymity    string `bson:"defaultOnymity"`
-	UserReopen bool   `bson:"defaultUserReopen"`
-	RelayMedia bool   `bson:"relayMedia"`
+	Onymity    string  `bson:"defaultOnymity"`
+	UserReopen bool    `bson:"defaultUserReopen"`
+	RelayMedia bool    `bson:"relayMedia"`
+	Groups     []int64 `bson:"groups,omitempty"`
 }
 
 type User struct {
@@ -103,6 +104,7 @@ func (db *Connection) CreateConfig() {
 		Onymity:    "realname",
 		UserReopen: false,
 		RelayMedia: true,
+		Groups:     nil,
 	}
 
 	_, err := configColl.InsertOne(context.Background(), config)
@@ -458,6 +460,7 @@ func (db *Connection) UpdateConfig(config *Config) *Config {
 				{Key: "defaultOnymity", Value: config.Onymity},
 				{Key: "defaultUserReopen", Value: config.UserReopen},
 				{Key: "relayMedia", Value: config.RelayMedia},
+				{Key: "groups", Value: config.Groups},
 			},
 		}},
 	).Decode(&updatedConfig)
@@ -689,6 +692,13 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 			"relayMedia": bson.M{
 				"bsonType":    "bool",
 				"description": "Toggle whether or not to relay media (photos, videos, etc)",
+			},
+			"groups": bson.M{
+				"bsonType":    "array",
+				"description": "An array of groups that this bot belongs to",
+				"items": bson.M{
+					"bsonType": "long",
+				},
 			},
 		},
 	}
