@@ -436,6 +436,15 @@ func (db *Connection) GetOriginReceivers(excludeRole *int64, origin int64) []int
 	return users
 }
 
+func (db *Connection) GetGroupReceivers() []int64 {
+	config, err := db.GetConfig()
+	if err != nil {
+		return nil
+	}
+
+	return config.Groups
+}
+
 func (db *Connection) GetAssigneeReceivers(users []int64) []int64 {
 	roles := db.GetAllRoles()
 	for _, role := range roles {

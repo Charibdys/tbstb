@@ -26,15 +26,19 @@ type RelayParams struct {
 	Message   *telego.Message
 }
 
-func AddedToGroup(bot *telego.Bot) th.Predicate {
+type TBSTBBot struct {
+	*telego.Bot
+	User *telego.User
+}
+
+func AddedToGroup(bot *TBSTBBot) th.Predicate {
 	return func(update telego.Update) bool {
 		if update.Message == nil {
 			return false
 		}
 
-		botUser, _ := bot.GetMe()
 		for _, user := range update.Message.NewChatMembers {
-			if user.ID == botUser.ID {
+			if user.ID == bot.User.ID {
 				return true
 			}
 		}
@@ -45,15 +49,25 @@ func AddedToGroup(bot *telego.Bot) th.Predicate {
 func main() {
 	botToken := os.Getenv("TOKEN")
 
-	bot, err := telego.NewBot(botToken, telego.WithDiscardLogger())
+	telegoBot, err := telego.NewBot(botToken, telego.WithDiscardLogger())
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	botUser, err := telegoBot.GetMe()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
+	bot := &TBSTBBot{
+		telegoBot,
+		botUser,
+	}
+
 	updates, _ := bot.UpdatesViaLongPolling(nil)
 
-	bh, _ := th.NewBotHandler(bot, updates)
+	bh, _ := th.NewBotHandler(bot.Bot, updates)
 
 	defer bh.Stop()
 
@@ -68,71 +82,75 @@ func main() {
 		config = db.HandleConfigError()
 	}
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		startCommand(bot, &update, db, config)
 	}, th.CommandEqual("start"))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		broadcastCommand(bot, &update, db)
 	}, th.Union(th.CommandEqual("broadcast"), th.CaptionCommandEqual("broadcast")))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		versionCommand(bot, &update, db)
 	}, th.CommandEqual("version"))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		closeCommand(bot, &update, db)
 	}, th.CommandEqual("close"))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		reopenCommand(bot, &update, db)
 	}, th.CommandEqual("reopen"))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		assignCommand(bot, &update, db)
 	}, th.CommandEqual("assign"))
 
-	bh.Handle(func(bot *telego.Bot, update telego.Update) {
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		assignToTicket(bot, &query, db)
 	}, th.CallbackDataPrefix("assign_user="))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		nextAssignPage(bot, &query, db)
 	}, th.CallbackDataPrefix("next_assign_page="))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		prevAssignPage(bot, &query, db)
 	}, th.CallbackDataPrefix("prev_assign_page="))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		cancelAssign(bot, &query, db)
 	}, th.CallbackDataEqual("cancel_assign"))
 
-	bh.HandleMessage(func(bot *telego.Bot, message telego.Message) {
-		messageHandler(bot, &message, db, config)
+	bh.HandleMessage(func(telegoBot *telego.Bot, message telego.Message) {
+		if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
+			groupMessageHandler(bot, &message, db, config)
+		} else {
+			privateMessageHandler(bot, &message, db, config)
+		}
 	}, th.AnyMessage())
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		newTicket(bot, &query, db)
 	}, th.CallbackDataEqual("new_ticket"))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		addToTicket(bot, &query, db)
 	}, th.CallbackDataPrefix("ticket="))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		cancelAddToTicket(bot, &query, db)
 	}, th.CallbackDataEqual("cancel_addto"))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		nextPage(bot, &query, db)
 	}, th.CallbackDataPrefix("next_page="))
 
-	bh.HandleCallbackQuery(func(bot *telego.Bot, query telego.CallbackQuery) {
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		prevPage(bot, &query, db)
 	}, th.CallbackDataPrefix("prev_page="))
 
@@ -145,7 +163,11 @@ func main() {
 	}()
 }
 
-func startCommand(bot *telego.Bot, update *telego.Update, db *database.Connection, config *database.Config) {
+func startCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection, config *database.Config) {
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		return
+	}
+
 	if db.GetUserCount() != 0 {
 		user, _ := db.GetUser(update.Message.From.ID)
 		if user != nil {
@@ -186,7 +208,7 @@ func startCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 	}
 }
 
-func registerGroup(bot *telego.Bot, update *telego.Update, db *database.Connection, config *database.Config) {
+func registerGroup(bot *TBSTBBot, update *telego.Update, db *database.Connection, config *database.Config) {
 	admins, err := bot.GetChatAdministrators(&telego.GetChatAdministratorsParams{
 		ChatID: telego.ChatID{ID: update.Message.Chat.ID},
 	})
@@ -218,7 +240,7 @@ func registerGroup(bot *telego.Bot, update *telego.Update, db *database.Connecti
 	db.UpdateConfig(config)
 }
 
-func noUser(bot *telego.Bot, userID int64) {
+func noUser(bot *TBSTBBot, userID int64) {
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
 		ChatID:    telego.ChatID{ID: userID},
 		Text:      "Please use /start before creating a ticket.",
@@ -226,7 +248,94 @@ func noUser(bot *telego.Bot, userID int64) {
 	})
 }
 
-func messageHandler(bot *telego.Bot, message *telego.Message, db *database.Connection, config *database.Config) {
+func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection, config *database.Config) {
+	user, err := db.GetUser(message.From.ID)
+	if err != nil {
+		return
+	}
+
+	if message.ReplyToMessage == nil {
+		return
+	}
+
+	if message.ReplyToMessage.From.ID != bot.User.ID {
+		return
+	}
+
+	var text string
+	if message.Text != "" {
+		text = message.Text
+	} else if message.Caption != "" {
+		text = message.Caption
+	}
+
+	id, ticket, reply_message := db.GetTicketAndMessage(message.ReplyToMessage.MessageID, user.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: message.Chat.ID},
+			Text:             "This ticket or message does not exist.",
+			ReplyToMessageID: message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+
+	if ticket.ClosedBy != nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:           telego.ChatID{ID: user.ID},
+			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
+			ReplyToMessageID: message.MessageID,
+			ParseMode:        "HTML",
+		})
+		return
+	}
+
+	reply_to := reply_message.GetMessageReceivers()
+	id_short := id[len(id)-7:]
+	media, uniqueMediaID := getMessageMediaID(message)
+
+	var fmtText string
+	var receivers []int64
+
+	role, _ := db.GetRole(user.ID)
+	if role != nil {
+		fmtText = formatRoleMessage(text, user, role, id_short)
+		receivers = db.GetOriginReceivers(&role.ID, ticket.Creator)
+	} else {
+		fmtText = formatMessage(text, user, id_short)
+		if ticket.Assignees != nil {
+			receivers = db.GetAssigneeReceivers(ticket.Assignees)
+		} else {
+			receivers = db.GetRoleReceivers(&ticket.Creator)
+		}
+	}
+
+	confirmedReceivers := sendMessage(&RelayParams{
+		Text:      fmtText,
+		Media:     media,
+		Users:     receivers,
+		Reply:     reply_to,
+		ParseMode: "HTML",
+		Message:   message,
+	}, bot)
+
+	confirmedReceivers = append(confirmedReceivers, database.Receiver{
+		MSID:   message.MessageID,
+		UserID: user.ID,
+	})
+
+	db.AppendMessage(id, &database.Message{
+		Sender:        user.ID,
+		OriginMSID:    message.MessageID,
+		DateSent:      time.Now(),
+		Receivers:     confirmedReceivers,
+		Text:          &text,
+		Media:         media,
+		UniqueMediaID: uniqueMediaID,
+	})
+}
+
+func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection, config *database.Config) {
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
 		noUser(bot, message.From.ID)
@@ -333,7 +442,7 @@ func formatRoleMessage(text string, user *database.User, role *database.Role, ti
 	return text
 }
 
-func sendMessage(params *RelayParams, bot *telego.Bot) []database.Receiver {
+func sendMessage(params *RelayParams, bot *TBSTBBot) []database.Receiver {
 	var receivers []database.Receiver
 
 	for _, roleID := range params.Users {
@@ -350,7 +459,7 @@ func sendMessage(params *RelayParams, bot *telego.Bot) []database.Receiver {
 	return receivers
 }
 
-func relay(id int64, params *RelayParams, bot *telego.Bot) *telego.Message {
+func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 	var msg *telego.Message
 	if params.Media == nil {
 		var err error
@@ -454,7 +563,7 @@ func relay(id int64, params *RelayParams, bot *telego.Bot) *telego.Message {
 	return msg
 }
 
-func noReply(bot *telego.Bot, original_message int, ticket_ids []string, user *database.User) {
+func noReply(bot *TBSTBBot, original_message int, ticket_ids []string, user *database.User) {
 	text := "No reply found.\n\n" +
 		"Would you like to create a new ticket with this message " +
 		"or add this message to one of your tickets?\n\n"
@@ -514,7 +623,7 @@ func noReply(bot *telego.Bot, original_message int, ticket_ids []string, user *d
 	})
 }
 
-func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func newTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	reply_to := query.Message.ReplyToMessage
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
@@ -542,6 +651,7 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 	}
 
 	receivers := db.GetRoleReceivers(&user.ID)
+	receivers = append(receivers, db.GetGroupReceivers()...)
 
 	confirmedReceivers := sendMessage(&RelayParams{
 		Text:      fmtText,
@@ -574,7 +684,7 @@ func newTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connec
 	})
 }
 
-func cancelAddToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func cancelAddToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 		Text:            "Canceled adding message to ticket",
@@ -586,7 +696,7 @@ func cancelAddToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *databas
 	})
 }
 
-func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	reply_to := query.Message.ReplyToMessage
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
@@ -673,7 +783,7 @@ func addToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Conn
 	})
 }
 
-func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	role, err := db.GetRole(update.Message.From.ID)
 	if err != nil {
 		noUser(bot, update.Message.From.ID)
@@ -758,7 +868,7 @@ func broadcastCommand(bot *telego.Bot, update *telego.Update, db *database.Conne
 	})
 }
 
-func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+func versionCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
 		noUser(bot, update.Message.From.ID)
@@ -777,7 +887,7 @@ func versionCommand(bot *telego.Bot, update *telego.Update, db *database.Connect
 	})
 }
 
-func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
@@ -834,7 +944,7 @@ func closeCommand(bot *telego.Bot, update *telego.Update, db *database.Connectio
 	}, bot)
 }
 
-func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
@@ -890,7 +1000,7 @@ func reopenCommand(bot *telego.Bot, update *telego.Update, db *database.Connecti
 	}, bot)
 }
 
-func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connection) {
+func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
@@ -972,7 +1082,7 @@ func assignCommand(bot *telego.Bot, update *telego.Update, db *database.Connecti
 	})
 }
 
-func assignToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	reply_to := query.Message.ReplyToMessage
 	_, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
@@ -1037,7 +1147,7 @@ func assignToTicket(bot *telego.Bot, query *telego.CallbackQuery, db *database.C
 	})
 }
 
-func cancelAssign(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 		Text:            "Canceled assigning ticket to user",
@@ -1078,7 +1188,7 @@ func getMessageMediaID(message *telego.Message) (*string, *string) {
 	return nil, nil
 }
 
-func nextPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func nextPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
 
 	page := strings.Split(query.Data, "=")[1]
@@ -1146,7 +1256,7 @@ func nextPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connect
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
-func prevPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func prevPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
 
 	page := strings.Split(query.Data, "=")[1]
@@ -1210,7 +1320,7 @@ func prevPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connect
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
-func nextAssignPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func nextAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 5
 
 	data := strings.Split(query.Data, "=")[1]
@@ -1278,7 +1388,7 @@ func nextAssignPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.C
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
-func prevAssignPage(bot *telego.Bot, query *telego.CallbackQuery, db *database.Connection) {
+func prevAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 5
 
 	data := strings.Split(query.Data, "=")[1]
