@@ -240,9 +240,13 @@ func registerGroup(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	db.UpdateConfig(config)
 }
 
-func noUser(bot *TBSTBBot, userID int64) {
+func noUser(bot *TBSTBBot, message *telego.Message) {
+	if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
+		return
+	}
+
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:    telego.ChatID{ID: userID},
+		ChatID:    telego.ChatID{ID: message.From.ID},
 		Text:      "Please use /start before creating a ticket.",
 		ParseMode: "HTML",
 	})
@@ -338,7 +342,7 @@ func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Co
 func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection, config *database.Config) {
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
-		noUser(bot, message.From.ID)
+		noUser(bot, message)
 		return
 	}
 
@@ -627,7 +631,7 @@ func newTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connecti
 	reply_to := query.Message.ReplyToMessage
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
-		noUser(bot, reply_to.From.ID)
+		noUser(bot, reply_to)
 		return
 	}
 
@@ -700,7 +704,7 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 	reply_to := query.Message.ReplyToMessage
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
-		noUser(bot, reply_to.From.ID)
+		noUser(bot, reply_to)
 		return
 	}
 
@@ -786,7 +790,7 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	role, err := db.GetRole(update.Message.From.ID)
 	if err != nil {
-		noUser(bot, update.Message.From.ID)
+		noUser(bot, update.Message)
 		return
 	}
 	if role.RoleType != "owner" {
@@ -800,13 +804,20 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 		text = update.Message.Caption
 	}
 
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
 	arg := strings.SplitN(text, " ", 2)
 	if len(arg) != 2 {
 		if update.Message.Caption != "" {
 			text = ""
 		} else {
 			_, _ = bot.SendMessage(&telego.SendMessageParams{
-				ChatID:           telego.ChatID{ID: role.ID},
+				ChatID:           telego.ChatID{ID: chatID},
 				Text:             "The broadcast command requires input.",
 				ReplyToMessageID: update.Message.MessageID,
 				ParseMode:        "HTML",
@@ -820,7 +831,7 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 
 	if strings.TrimSpace(text) != text {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: role.ID},
+			ChatID:           telego.ChatID{ID: chatID},
 			Text:             "Please remove any whitespaces between the command and the text.",
 			ReplyToMessageID: update.Message.MessageID,
 			ParseMode:        "HTML",
@@ -829,7 +840,7 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 		return
 	}
 
-	users := db.GetBroadcastableUsers(&role.ID)
+	users := db.GetBroadcastableUsers(&chatID)
 	if users == nil {
 		return
 	}
@@ -862,16 +873,20 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 	count := len(confirmedReceivers)
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:           telego.ChatID{ID: role.ID},
+		ChatID:           telego.ChatID{ID: chatID},
 		Text:             fmt.Sprintf("Success! Sent broadcast to %d users.", count),
 		ReplyToMessageID: update.Message.MessageID,
 	})
 }
 
 func versionCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		return
+	}
+
 	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
-		noUser(bot, update.Message.From.ID)
+		noUser(bot, update.Message)
 		return
 	}
 
@@ -890,6 +905,9 @@ func versionCommand(bot *TBSTBBot, update *telego.Update, db *database.Connectio
 func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
+		if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+			return
+		}
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
 			ChatID:           telego.ChatID{ID: update.Message.From.ID},
 			Text:             "Please reply to a message to use this command.",
@@ -900,7 +918,7 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 	}
 	_, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
-		noUser(bot, update.Message.From.ID)
+		noUser(bot, update.Message)
 		return
 	}
 	role, err := db.GetRole(update.Message.From.ID)
@@ -912,10 +930,17 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 		return
 	}
 
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
 	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, role.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: role.ID},
+			ChatID:           telego.ChatID{ID: chatID},
 			Text:             "This ticket or message does not exist.",
 			ReplyToMessageID: update.Message.MessageID,
 			ParseMode:        "HTML",
@@ -932,7 +957,12 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 
 	text := fmt.Sprintf("Ticket <code>%s</code> has been closed.", id_short)
 
-	receivers := db.GetOriginReceivers(&role.ID, ticket.Creator)
+	var receivers []int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		receivers = append(receivers, chatID, ticket.Creator)
+	} else {
+		receivers = db.GetOriginReceivers(&role.ID, ticket.Creator)
+	}
 
 	sendMessage(&RelayParams{
 		Text:      text,
@@ -957,13 +987,20 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	}
 	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
-		noUser(bot, update.Message.From.ID)
+		noUser(bot, update.Message)
 		return
 	}
 
 	// if user.CanReopen == false {
 	// 	return
 	// }
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = user.ID
+	}
 
 	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, user.ID)
 	if ticket == nil {
@@ -988,7 +1025,12 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 		text = fmt.Sprintf("Ticket <code>%s</code> has been reopenned by %s.", id_short, user.Fullname)
 	}
 
-	receivers := db.GetOriginReceivers(&user.ID, ticket.Creator)
+	var receivers []int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		receivers = append(receivers, chatID, ticket.Creator)
+	} else {
+		receivers = db.GetOriginReceivers(&user.ID, ticket.Creator)
+	}
 
 	sendMessage(&RelayParams{
 		Text:      text,
@@ -1013,7 +1055,7 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	}
 	_, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
-		noUser(bot, update.Message.From.ID)
+		noUser(bot, update.Message)
 		return
 	}
 	role, err := db.GetRole(update.Message.From.ID)
@@ -1023,6 +1065,13 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 
 	if !(role.RoleType == "owner" || role.RoleType == "admin") {
 		return
+	}
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
 	}
 
 	roles := db.GetAllRoles()
@@ -1057,7 +1106,7 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 
 	if role_options == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: role.ID},
+			ChatID:           telego.ChatID{ID: chatID},
 			Text:             "There were no roles found to assign this ticket to.",
 			ReplyToMessageID: update.Message.MessageID,
 			ParseMode:        "HTML",
@@ -1074,7 +1123,7 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	)
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:           telego.ChatID{ID: role.ID},
+		ChatID:           telego.ChatID{ID: chatID},
 		Text:             text,
 		ReplyToMessageID: update.Message.MessageID,
 		ReplyMarkup:      markup,
@@ -1086,7 +1135,7 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 	reply_to := query.Message.ReplyToMessage
 	_, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
-		noUser(bot, reply_to.From.ID)
+		noUser(bot, reply_to)
 		return
 	}
 
@@ -1095,6 +1144,7 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 		return
 	}
 
+	// TODO: Limit assign to the user that invoked the commmand
 	data := strings.Split(query.Data, "=")[1]
 	parameters := strings.Split(data, ":")
 
@@ -1148,6 +1198,8 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 }
 
 func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
+	// TODO: Limit cancelling to the user that invoked the command
+
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 		Text:            "Canceled assigning ticket to user",
