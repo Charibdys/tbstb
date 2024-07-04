@@ -95,6 +95,10 @@ func main() {
 	}, th.CommandEqual("version"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		privacyPolicyCommand(bot, &update, db)
+	}, th.CommandEqual("privacy"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		closeCommand(bot, &update, db)
 	}, th.CommandEqual("close"))
 
@@ -896,6 +900,68 @@ func versionCommand(bot *TBSTBBot, update *telego.Update, db *database.Connectio
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
 		ChatID:                telego.ChatID{ID: user.ID},
 		Text:                  fmt.Sprintf("TBSTB v%s ~ <a href=\"%s\">[Source]</a>", version, source),
+		ReplyToMessageID:      update.Message.MessageID,
+		DisableWebPagePreview: false,
+		ParseMode:             "HTML",
+	})
+}
+
+func privacyPolicyCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+
+	privacy_policy := `
+<b>Privacy Policy</b>
+
+<i>Last updated: July 03, 2024</i>
+
+The Privacy Policy details what data the SOFTWARE stores, how the SOFTWARE collects it, and for what purpose it is used for.
+For the purpose of this Privacy Policy, the terms 'SOFTWARE' refers to the program this Telegram Third Party App uses, 'HOST' refers to the party that is running the SOFTWARE and supplying its service to you, and 'USER' refers to you, the receiver of the service.
+
+Data obtained from the USER is not used to show advertisements.
+Only the necessary data from the USER is stored to provide a feature-rich ticketing support system.
+
+Data from the USER is collected and processed for the legitimate purposes of providing services to the USER.
+
+<b><u>The following USER data is collected:</u></b>
+<i>Telegram provided unique user ID</i>
+This ID belongs to Telegram and not to the USER, and is used to identify the USER's account within the SOFTWARE.
+The HOST is not obligated to delete this data from the database, as this would conflict with the legitimate services of the SOFTWARE.
+			
+<i>Telegram profile information</i>
+This includes the full name the USER sets in the Telegram account profile.
+This information is updated with every USER message processed by the SOFTWARE.
+			
+<i>USER message content</i>
+The message ID of a USER's message is stored for future processing. This message ID is tied to the USER's Telegram provided unique user ID.
+The message media id, unique media ID, sent day, and/or text/caption will be stored for future processing.
+
+<b><u>How USER data is collected and used:</u></b>
+
+USER data is collected and processed by the SOFTWARE with each message or command voluntarily given to the SOFTWARE.
+
+USER message content is voluntarily given to the SOFTWARE. The SOFTWARE will process the message and send a copy to the applicable users of the Telegram Third Party App.
+
+USER data may be collected for anonymized statistics, which can be made publically available or used for internal analysis.
+
+<b><u>USER Data Retention, Deletion, and Security:</u></b>
+
+USER data is retained as long as the HOST deems necessary, to the extent that is required to comply with legal obligations and legitmate services of the SOFTWARE.
+
+The USER has a right to request assistance in deleting the USER's data by contacting the HOST.
+The HOST may need to retain certain USER information when there is a legitimate reason to do so.
+
+The HOST is responsible for best effort in securing USER data and engaging with it securely.
+
+<b><u>Privacy Policy Changes, Contacts, and Consent:</u></b>
+
+Changes to the Privacy Policy may be made at any time, and will be announced by the HOST.
+
+This Telegram Third Party App can be used to contact the HOST.
+
+The USER consents to the conditions of the Privacy Policy with the USER's continued use of this Telegram Third Party App.`
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:                telego.ChatID{ID: update.Message.From.ID},
+		Text:                  privacy_policy,
 		ReplyToMessageID:      update.Message.MessageID,
 		DisableWebPagePreview: false,
 		ParseMode:             "HTML",
