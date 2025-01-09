@@ -95,7 +95,7 @@ func main() {
 	}, th.CommandEqual("version"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
-		privacyPolicyCommand(bot, &update, db)
+		privacyPolicyCommand(bot, &update)
 	}, th.CommandEqual("privacy"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
@@ -127,14 +127,14 @@ func main() {
 	}, th.CallbackDataPrefix("prev_assign_page="))
 
 	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
-		cancelAssign(bot, &query, db)
+		cancelAssign(bot, &query)
 	}, th.CallbackDataEqual("cancel_assign"))
 
 	bh.HandleMessage(func(telegoBot *telego.Bot, message telego.Message) {
 		if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
-			groupMessageHandler(bot, &message, db, config)
+			groupMessageHandler(bot, &message, db)
 		} else {
-			privateMessageHandler(bot, &message, db, config)
+			privateMessageHandler(bot, &message, db)
 		}
 	}, th.AnyMessage())
 
@@ -147,7 +147,7 @@ func main() {
 	}, th.CallbackDataPrefix("ticket="))
 
 	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
-		cancelAddToTicket(bot, &query, db)
+		cancelAddToTicket(bot, &query)
 	}, th.CallbackDataEqual("cancel_addto"))
 
 	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
@@ -256,7 +256,7 @@ func noUser(bot *TBSTBBot, message *telego.Message) {
 	})
 }
 
-func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection, config *database.Config) {
+func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection) {
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
 		return
@@ -280,20 +280,20 @@ func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Co
 	id, ticket, reply_message := db.GetTicketAndMessage(message.ReplyToMessage.MessageID, user.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: message.Chat.ID},
-			Text:             "This ticket or message does not exist.",
-			ReplyToMessageID: message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: message.Chat.ID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
 
 	if ticket.ClosedBy != nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: user.ID},
-			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
-			ReplyToMessageID: message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: user.ID},
+			Text:            fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -343,7 +343,7 @@ func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Co
 	})
 }
 
-func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection, config *database.Config) {
+func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Connection) {
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
 		noUser(bot, message)
@@ -365,20 +365,20 @@ func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.
 	id, ticket, reply_message := db.GetTicketAndMessage(message.ReplyToMessage.MessageID, user.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: user.ID},
-			Text:             "This ticket or message does not exist.",
-			ReplyToMessageID: message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: user.ID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
 
 	if ticket.ClosedBy != nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: user.ID},
-			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
-			ReplyToMessageID: message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: user.ID},
+			Text:            fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", id[len(id)-7:]),
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -472,11 +472,11 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 	if params.Media == nil {
 		var err error
 		msg, err = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: id},
-			Text:             params.Text,
-			ParseMode:        params.ParseMode,
-			Entities:         params.Entities,
-			ReplyToMessageID: params.Reply[id],
+			ChatID:          telego.ChatID{ID: id},
+			Text:            params.Text,
+			ParseMode:       params.ParseMode,
+			Entities:        params.Entities,
+			ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 		})
 		if err != nil {
 			fmt.Printf("%s\n", err)
@@ -490,9 +490,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Animation: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		case params.Message.Document != nil:
 			msg, _ = bot.SendDocument(&telego.SendDocumentParams{
@@ -501,9 +501,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Document: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		case params.Message.Sticker != nil:
 			msg, _ = bot.SendSticker(&telego.SendStickerParams{
@@ -519,9 +519,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Video: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		case params.Message.VideoNote != nil:
 			msg, _ = bot.SendVideoNote(&telego.SendVideoNoteParams{
@@ -537,9 +537,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Audio: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		case params.Message.Photo != nil:
 			msg, _ = bot.SendPhoto(&telego.SendPhotoParams{
@@ -548,9 +548,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Photo: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		case params.Message.Voice != nil:
 			msg, _ = bot.SendVoice(&telego.SendVoiceParams{
@@ -559,9 +559,9 @@ func relay(id int64, params *RelayParams, bot *TBSTBBot) *telego.Message {
 				Voice: telego.InputFile{
 					FileID: *params.Media,
 				},
-				ParseMode:        params.ParseMode,
-				CaptionEntities:  params.Entities,
-				ReplyToMessageID: params.Reply[id],
+				ParseMode:       params.ParseMode,
+				CaptionEntities: params.Entities,
+				ReplyParameters: &telego.ReplyParameters{MessageID: params.Reply[id]},
 			})
 		default:
 			return nil
@@ -623,16 +623,31 @@ func noReply(bot *TBSTBBot, original_message int, ticket_ids []string, user *dat
 	}
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:           telego.ChatID{ID: user.ID},
-		Text:             text,
-		ReplyToMessageID: original_message,
-		ReplyMarkup:      markup,
-		ParseMode:        "HTML",
+		ChatID:          telego.ChatID{ID: user.ID},
+		Text:            text,
+		ReplyParameters: &telego.ReplyParameters{MessageID: original_message},
+		ReplyMarkup:     markup,
+		ParseMode:       "HTML",
 	})
 }
 
 func newTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
-	reply_to := query.Message.ReplyToMessage
+	var query_msg *telego.Message
+	var reply_to *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+		reply_to = query_msg.ReplyToMessage
+	}
+
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
@@ -685,14 +700,28 @@ func newTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connecti
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        fmt.Sprintf("Created ticket <code>%s</code>.\nYour ticket will be addressed shortly.", id_short),
 		ParseMode:   "HTML",
 		ReplyMarkup: nil,
 	})
 }
 
-func cancelAddToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
+func cancelAddToTicket(bot *TBSTBBot, query *telego.CallbackQuery) {
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
+
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 		Text:            "Canceled adding message to ticket",
@@ -700,12 +729,27 @@ func cancelAddToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.
 
 	bot.DeleteMessage(&telego.DeleteMessageParams{
 		ChatID:    telego.ChatID{ID: query.From.ID},
-		MessageID: query.Message.MessageID,
+		MessageID: query_msg.MessageID,
 	})
 }
 
 func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
-	reply_to := query.Message.ReplyToMessage
+	var query_msg *telego.Message
+	var reply_to *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+		reply_to = query_msg.ReplyToMessage
+	}
+
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
@@ -721,10 +765,10 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 
 	if ticket.ClosedBy != nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: user.ID},
-			Text:             fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", ticketID[len(ticketID)-7:]),
-			ReplyToMessageID: query.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: user.ID},
+			Text:            fmt.Sprintf("Ticket <code>%s</code> is closed.\nPlease select a different ticket or reopen it with /reopen.", ticketID[len(ticketID)-7:]),
+			ReplyParameters: &telego.ReplyParameters{MessageID: query_msg.MessageID},
+			ParseMode:       "HTML",
 		})
 		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 		return
@@ -769,7 +813,7 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 
 	db.AppendMessage(ticketID, &database.Message{
 		Sender:        user.ID,
-		OriginMSID:    query.Message.MessageID,
+		OriginMSID:    query_msg.MessageID,
 		DateSent:      time.Now(),
 		Receivers:     confirmedReceivers,
 		Text:          &text,
@@ -784,7 +828,7 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        fmt.Sprintf("Added message to ticket <code>%s</code>.\nYour message will be addressed shortly.", ticketID[len(ticketID)-7:]),
 		ParseMode:   "HTML",
 		ReplyMarkup: nil,
@@ -821,10 +865,10 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 			text = ""
 		} else {
 			_, _ = bot.SendMessage(&telego.SendMessageParams{
-				ChatID:           telego.ChatID{ID: chatID},
-				Text:             "The broadcast command requires input.",
-				ReplyToMessageID: update.Message.MessageID,
-				ParseMode:        "HTML",
+				ChatID:          telego.ChatID{ID: chatID},
+				Text:            "The broadcast command requires input.",
+				ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+				ParseMode:       "HTML",
 			})
 
 			return
@@ -835,10 +879,10 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 
 	if strings.TrimSpace(text) != text {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: chatID},
-			Text:             "Please remove any whitespaces between the command and the text.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "Please remove any whitespaces between the command and the text.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 
 		return
@@ -877,9 +921,9 @@ func broadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connect
 	count := len(confirmedReceivers)
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:           telego.ChatID{ID: chatID},
-		Text:             fmt.Sprintf("Success! Sent broadcast to %d users.", count),
-		ReplyToMessageID: update.Message.MessageID,
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            fmt.Sprintf("Success! Sent broadcast to %d users.", count),
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 	})
 }
 
@@ -898,15 +942,15 @@ func versionCommand(bot *TBSTBBot, update *telego.Update, db *database.Connectio
 	source := "github.com/Charibdys/tbstb"
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:                telego.ChatID{ID: user.ID},
-		Text:                  fmt.Sprintf("TBSTB v%s ~ <a href=\"%s\">[Source]</a>", version, source),
-		ReplyToMessageID:      update.Message.MessageID,
-		DisableWebPagePreview: false,
-		ParseMode:             "HTML",
+		ChatID:             telego.ChatID{ID: user.ID},
+		Text:               fmt.Sprintf("TBSTB v%s ~ <a href=\"%s\">[Source]</a>", version, source),
+		ReplyParameters:    &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: false},
+		ParseMode:          "HTML",
 	})
 }
 
-func privacyPolicyCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+func privacyPolicyCommand(bot *TBSTBBot, update *telego.Update) {
 
 	privacy_policy := `
 <b>Privacy Policy</b>
@@ -960,11 +1004,11 @@ This Telegram Third Party App can be used to contact the HOST.
 The USER consents to the conditions of the Privacy Policy with the USER's continued use of this Telegram Third Party App.`
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:                telego.ChatID{ID: update.Message.From.ID},
-		Text:                  privacy_policy,
-		ReplyToMessageID:      update.Message.MessageID,
-		DisableWebPagePreview: false,
-		ParseMode:             "HTML",
+		ChatID:             telego.ChatID{ID: update.Message.From.ID},
+		Text:               privacy_policy,
+		ReplyParameters:    &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: false},
+		ParseMode:          "HTML",
 	})
 }
 
@@ -975,10 +1019,10 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 			return
 		}
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: update.Message.From.ID},
-			Text:             "Please reply to a message to use this command.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: update.Message.From.ID},
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1006,10 +1050,10 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, role.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: chatID},
-			Text:             "This ticket or message does not exist.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1044,10 +1088,10 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: update.Message.From.ID},
-			Text:             "Please reply to a message to use this command.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: update.Message.From.ID},
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1071,10 +1115,10 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	id, id_short, ticket := db.GetTicketFromMSID(reply_to.MessageID, user.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: user.ID},
-			Text:             "This ticket or message does not exist.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: user.ID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1112,10 +1156,10 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	reply_to := update.Message.ReplyToMessage
 	if reply_to == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: update.Message.From.ID},
-			Text:             "Please reply to a message to use this command.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: update.Message.From.ID},
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1172,10 +1216,10 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 
 	if role_options == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: chatID},
-			Text:             "There were no roles found to assign this ticket to.",
-			ReplyToMessageID: update.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "There were no roles found to assign this ticket to.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
 		})
 
 		return
@@ -1189,16 +1233,31 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	)
 
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
-		ChatID:           telego.ChatID{ID: chatID},
-		Text:             text,
-		ReplyToMessageID: update.Message.MessageID,
-		ReplyMarkup:      markup,
-		ParseMode:        "HTML",
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            text,
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		ReplyMarkup:     markup,
+		ParseMode:       "HTML",
 	})
 }
 
 func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
-	reply_to := query.Message.ReplyToMessage
+	var query_msg *telego.Message
+	var reply_to *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+		reply_to = query_msg.ReplyToMessage
+	}
+
 	_, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
@@ -1237,10 +1296,10 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 	id, id_short, ticket := db.GetTicketFromMSID(msid, reply_to.From.ID)
 	if ticket == nil {
 		_, _ = bot.SendMessage(&telego.SendMessageParams{
-			ChatID:           telego.ChatID{ID: role.ID},
-			Text:             "This ticket or message does not exist.",
-			ReplyToMessageID: query.Message.MessageID,
-			ParseMode:        "HTML",
+			ChatID:          telego.ChatID{ID: role.ID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: query_msg.MessageID},
+			ParseMode:       "HTML",
 		})
 		return
 	}
@@ -1256,15 +1315,28 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        fmt.Sprintf("Assigned %s to ticket <code>%s</code>.", assignee.Name, id_short),
 		ParseMode:   "HTML",
 		ReplyMarkup: nil,
 	})
 }
 
-func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
+func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery) {
 	// TODO: Limit cancelling to the user that invoked the command
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
 
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
@@ -1273,7 +1345,7 @@ func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Conne
 
 	bot.DeleteMessage(&telego.DeleteMessageParams{
 		ChatID:    telego.ChatID{ID: query.From.ID},
-		MessageID: query.Message.MessageID,
+		MessageID: query_msg.MessageID,
 	})
 }
 
@@ -1308,6 +1380,20 @@ func getMessageMediaID(message *telego.Message) (*string, *string) {
 
 func nextPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
+
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
 
 	page := strings.Split(query.Data, "=")[1]
 
@@ -1365,7 +1451,7 @@ func nextPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        text,
 		ParseMode:   "HTML",
 		ReplyMarkup: markup,
@@ -1376,6 +1462,20 @@ func nextPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 
 func prevPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 3
+
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
 
 	page := strings.Split(query.Data, "=")[1]
 
@@ -1429,7 +1529,7 @@ func prevPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        text,
 		ParseMode:   "HTML",
 		ReplyMarkup: markup,
@@ -1440,6 +1540,20 @@ func prevPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 
 func nextAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 5
+
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
 
 	data := strings.Split(query.Data, "=")[1]
 	parameters := strings.Split(data, ":")
@@ -1497,7 +1611,7 @@ func nextAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        text,
 		ParseMode:   "HTML",
 		ReplyMarkup: markup,
@@ -1508,6 +1622,20 @@ func nextAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 
 func prevAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	const page_size = 5
+
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
 
 	data := strings.Split(query.Data, "=")[1]
 	parameters := strings.Split(data, ":")
@@ -1565,7 +1693,7 @@ func prevAssignPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 
 	bot.EditMessageText(&telego.EditMessageTextParams{
 		ChatID:      telego.ChatID{ID: query.From.ID},
-		MessageID:   query.Message.MessageID,
+		MessageID:   query_msg.MessageID,
 		Text:        text,
 		ParseMode:   "HTML",
 		ReplyMarkup: markup,
