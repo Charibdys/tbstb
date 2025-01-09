@@ -1445,7 +1445,7 @@ func nextPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 		),
 		tu.InlineKeyboardRow(ticket_options...),
 		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_addto"),
 		),
 	)
 
@@ -1523,7 +1523,7 @@ func prevPage(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connectio
 		),
 		tu.InlineKeyboardRow(ticket_options...),
 		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel"),
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_addto"),
 		),
 	)
 
