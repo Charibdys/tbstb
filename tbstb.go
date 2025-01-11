@@ -439,12 +439,12 @@ func formatMessage(text string, user *database.User, ticket string) string {
 }
 
 func formatRoleMessage(text string, user *database.User, role *database.Role, ticket string) string {
-	if role.Onymity == "anon" {
-		text = fmt.Sprintf("<b>Admin</b>, Ticket: <code>%s</code>\n\n", ticket) + text
+	if role.Onymity == "realname" {
+		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Fullname, ticket) + text
 	} else if role.Onymity == "pseudonym" {
 		text = fmt.Sprintf("<b>%s</b>, Ticket: <code>%s</code>\n\n", role.Name, ticket) + text
 	} else {
-		text = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>, Ticket: <code>%s</code>\n\n", user.ID, user.Fullname, ticket) + text
+		text = fmt.Sprintf("<b>Admin</b>, Ticket: <code>%s</code>\n\n", ticket) + text
 	}
 
 	return text
