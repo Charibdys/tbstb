@@ -111,6 +111,10 @@ func main() {
 	}, th.CommandEqual("assign"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		roleCommand(bot, &update, db)
+	}, th.CommandEqual("role"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
@@ -129,6 +133,14 @@ func main() {
 	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
 		cancelAssign(bot, &query)
 	}, th.CallbackDataEqual("cancel_assign"))
+
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
+		setRole(bot, &query, db, config)
+	}, th.CallbackDataPrefix("setRole="))
+
+	bh.HandleCallbackQuery(func(telegoBot *telego.Bot, query telego.CallbackQuery) {
+		cancelSetRole(bot, &query)
+	}, th.CallbackDataEqual("cancel_setrole"))
 
 	bh.HandleMessage(func(telegoBot *telego.Bot, message telego.Message) {
 		if message.Chat.Type == "group" || message.Chat.Type == "supergroup" {
@@ -1241,6 +1253,132 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 	})
 }
 
+func roleCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message)
+		return
+	}
+	if role.RoleType != "owner" {
+		return
+	}
+
+	var text string
+	if update.Message.Caption == "" {
+		text = update.Message.Text
+	} else {
+		text = update.Message.Caption
+	}
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
+	args := strings.SplitN(text, " ", 2)
+	if len(args) != 2 {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "The role command requires either a user ID or name.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+
+		return
+	} else {
+		text = args[1]
+	}
+
+	if strings.TrimSpace(text) != text {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "Please remove any whitespaces between the command and the text.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+
+		return
+	}
+
+	var updated_user *database.User
+	var identifier string
+
+	id, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		text, _ = strings.CutPrefix(text, "@")
+		updated_user, _ = db.GetUserByName(text)
+		if updated_user == nil {
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: chatID},
+				Text:            fmt.Sprintf("User with the username @%s has not started the bot and cannot be promoted.", text),
+				ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+				ParseMode:       "HTML",
+			})
+
+			return
+		}
+
+		if updated_user.ID == role.ID {
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: chatID},
+				Text:            "You cannot change your own role as an owner!",
+				ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+				ParseMode:       "HTML",
+			})
+
+			return
+		}
+
+		identifier = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>", updated_user.ID, updated_user.Fullname)
+	} else {
+		updated_user, _ = db.GetUser(id)
+		if updated_user == nil {
+			updated_user = &database.User{
+				ID: id,
+			}
+
+			identifier = fmt.Sprintf("<b>%d</b>", updated_user.ID)
+		} else {
+			if updated_user.ID == role.ID {
+				_, _ = bot.SendMessage(&telego.SendMessageParams{
+					ChatID:          telego.ChatID{ID: chatID},
+					Text:            "You cannot change your own role as an owner!",
+					ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+					ParseMode:       "HTML",
+				})
+
+				return
+			}
+
+			identifier = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>", updated_user.ID, updated_user.Fullname)
+		}
+	}
+
+	// Query invoker for which role to promote to
+	query := fmt.Sprintf("Which role should %s be set to?", identifier)
+
+	markup := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Admin").WithCallbackData(fmt.Sprintf("setRole=%d:%s:admin", updated_user.ID, updated_user.Fullname)),
+			tu.InlineKeyboardButton("Moderator").WithCallbackData(fmt.Sprintf("setRole=%d:%s:mod", updated_user.ID, updated_user.Fullname)),
+			tu.InlineKeyboardButton("User").WithCallbackData(fmt.Sprintf("setRole=%d:%s:user", updated_user.ID, updated_user.Fullname)),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("Cancel").WithCallbackData("cancel_setrole"),
+		),
+	)
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            query,
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		ReplyMarkup:     markup,
+		ParseMode:       "HTML",
+	})
+}
+
 func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	var query_msg *telego.Message
 	var reply_to *telego.Message
@@ -1341,6 +1479,180 @@ func cancelAssign(bot *TBSTBBot, query *telego.CallbackQuery) {
 	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
 		Text:            "Canceled assigning ticket to user",
+	})
+
+	bot.DeleteMessage(&telego.DeleteMessageParams{
+		ChatID:    telego.ChatID{ID: query.From.ID},
+		MessageID: query_msg.MessageID,
+	})
+}
+
+func setRole(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection, config *database.Config) {
+	var query_msg *telego.Message
+	var reply_to *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+		reply_to = query_msg.ReplyToMessage
+	}
+
+	_, err := db.GetUser(reply_to.From.ID)
+	if err != nil {
+		noUser(bot, reply_to)
+		return
+	}
+
+	role, err := db.GetRole(reply_to.From.ID)
+	if err != nil {
+		return
+	}
+
+	if role.RoleType != "owner" {
+		return // Not authorized
+	}
+
+	// TODO: Limit setting role to the user that invoked the commmand
+	data := strings.Split(query.Data, "=")[1]
+	parameters := strings.Split(data, ":")
+
+	userID, err := strconv.ParseInt(parameters[0], 10, 64)
+	if err != nil {
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+	user_name := parameters[1]
+	update_role := parameters[2]
+
+	var identifier string
+	if user_name != "" {
+		identifier = fmt.Sprintf("<b><a href=\"tg://user?id=%d\">%s</a></b>", userID, user_name)
+	} else {
+		identifier = fmt.Sprintf("<b>%d</b>", userID)
+	}
+
+	target_role, err := db.GetRole(userID)
+	if err != nil {
+		if update_role == "user" {
+			bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            "This user's role is unchanged.",
+			})
+
+			return
+		}
+
+		db.CreateRole(userID, user_name, update_role, config)
+
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            fmt.Sprintf("Promoted user to %s", update_role),
+		})
+
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:    telego.ChatID{ID: userID},
+			Text:      fmt.Sprintf("You have been promoted to %s!", update_role),
+			ParseMode: "HTML",
+		})
+
+		bot.EditMessageText(&telego.EditMessageTextParams{
+			ChatID:      telego.ChatID{ID: query.From.ID},
+			MessageID:   query_msg.MessageID,
+			Text:        fmt.Sprintf("Promoted user %s to %s.", identifier, update_role),
+			ParseMode:   "HTML",
+			ReplyMarkup: nil,
+		})
+	} else {
+		if target_role.RoleType == update_role {
+			bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            fmt.Sprintf("This user is already a %s.", update_role),
+			})
+
+			return
+		}
+
+		var promoted bool
+
+		if target_role.RoleType == "admin" && (update_role == "mod" || update_role == "user") {
+			promoted = false
+		} else if target_role.RoleType == "mod" && update_role == "user" {
+			promoted = false
+		} else {
+			promoted = true
+		}
+
+		if promoted {
+			target_role.RoleType = update_role
+
+			db.UpdateRole(target_role)
+
+			bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            fmt.Sprintf("Promoted user to %s", update_role),
+			})
+
+			_, _ = bot.SendMessage(&telego.SendMessageParams{
+				ChatID:    telego.ChatID{ID: userID},
+				Text:      fmt.Sprintf("You have been promoted to %s!", update_role),
+				ParseMode: "HTML",
+			})
+
+			bot.EditMessageText(&telego.EditMessageTextParams{
+				ChatID:      telego.ChatID{ID: query.From.ID},
+				MessageID:   query_msg.MessageID,
+				Text:        fmt.Sprintf("Promoted user %s to %s.", identifier, update_role),
+				ParseMode:   "HTML",
+				ReplyMarkup: nil,
+			})
+		} else {
+			if update_role == "user" {
+				db.DeleteRole(target_role.ID)
+			} else {
+				target_role.RoleType = update_role
+
+				db.UpdateRole(target_role)
+			}
+
+			bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            fmt.Sprintf("Demoted user to %s", update_role),
+			})
+
+			bot.DeleteMessage(&telego.DeleteMessageParams{
+				ChatID:    telego.ChatID{ID: query.From.ID},
+				MessageID: query_msg.MessageID,
+			})
+		}
+	}
+}
+
+func cancelSetRole(bot *TBSTBBot, query *telego.CallbackQuery) {
+	// TODO: Limit cancelling to the user that invoked the command
+	var query_msg *telego.Message
+
+	switch query.Message.(type) {
+	case *telego.InaccessibleMessage:
+		bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "Could not access the query message.",
+			ShowAlert:       true,
+		})
+		return
+	case *telego.Message:
+		query_msg = query.Message.(*telego.Message)
+	}
+
+	bot.AnswerCallbackQuery(&telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            "Canceled setting user role.",
 	})
 
 	bot.DeleteMessage(&telego.DeleteMessageParams{

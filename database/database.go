@@ -222,6 +222,18 @@ func (db *Connection) GetUser(id int64) (*User, error) {
 	return &user, nil
 }
 
+func (db *Connection) GetUserByName(name string) (*User, error) {
+	userColl := db.Client.Database("tbstb").Collection("users")
+
+	var user User
+	err := userColl.FindOne(context.Background(), bson.D{{Key: "username", Value: primitive.Regex{Pattern: name, Options: "i"}}}).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 func (db *Connection) GetBroadcastableUsers(excludeID *int64) *[]int64 {
 	userColl := db.Client.Database("tbstb").Collection("users")
 
@@ -680,7 +692,7 @@ func (db *Connection) ValidateSchema(create bool, database *mongo.Database) {
 			},
 			"role": bson.M{
 				"bsonType":    "string",
-				"description": "The name of the role",
+				"description": "The name of the role, either \"owner\", \"admin\", or \"mod\"",
 			},
 		},
 	}
