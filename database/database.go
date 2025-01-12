@@ -242,7 +242,6 @@ func (db *Connection) GetBroadcastableUsers(excludeID *int64) *[]int64 {
 			{Key: "$ne", Value: excludeID},
 		}},
 		{Key: "disabledBroadcasts", Value: false},
-		{Key: "banned", Value: false},
 	}
 
 	values, err := userColl.Distinct(context.Background(), "_id", filter)

@@ -123,6 +123,10 @@ func main() {
 	}, th.CommandEqual("limit"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		banCommand(bot, &update, db)
+	}, th.CommandEqual("ban"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
@@ -282,6 +286,10 @@ func groupMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.Co
 		return
 	}
 
+	if user.Banned {
+		return
+	}
+
 	if message.ReplyToMessage == nil {
 		return
 	}
@@ -367,6 +375,10 @@ func privateMessageHandler(bot *TBSTBBot, message *telego.Message, db *database.
 	user, err := db.GetUser(message.From.ID)
 	if err != nil {
 		noUser(bot, message)
+		return
+	}
+
+	if user.Banned {
 		return
 	}
 
@@ -674,6 +686,11 @@ func newTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connecti
 		return
 	}
 
+	// TODO: Answer the callback query
+	if user.Banned {
+		return
+	}
+
 	var text string
 	if reply_to.Text != "" {
 		text = reply_to.Text
@@ -773,6 +790,10 @@ func addToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connec
 	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
+		return
+	}
+
+	if user.Banned {
 		return
 	}
 
@@ -1046,11 +1067,16 @@ func closeCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 		})
 		return
 	}
-	_, err := db.GetUser(update.Message.From.ID)
+	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
 		noUser(bot, update.Message)
 		return
 	}
+
+	if user.Banned {
+		return
+	}
+
 	role, err := db.GetRole(update.Message.From.ID)
 	if err != nil {
 		return
@@ -1121,6 +1147,10 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 		return
 	}
 
+	if user.Banned {
+		return
+	}
+
 	if !user.CanReopen {
 		return
 	}
@@ -1183,11 +1213,16 @@ func assignCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 		})
 		return
 	}
-	_, err := db.GetUser(update.Message.From.ID)
+	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
 		noUser(bot, update.Message)
 		return
 	}
+
+	if user.Banned {
+		return
+	}
+
 	role, err := db.GetRole(update.Message.From.ID)
 	if err != nil {
 		return
@@ -1495,6 +1530,84 @@ func limitCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection)
 	})
 }
 
+func banCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: update.Message.From.ID}, // TODO: Send this in group chats as well
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message)
+		return
+	}
+
+	if !(role.RoleType == "owner" || role.RoleType == "admin") {
+		return // Not authorized
+	}
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
+	_, ticket, message := db.GetTicketAndMessage(reply_to.MessageID, role.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+
+	ban_user, err := db.GetUser(message.Sender)
+	if err != nil {
+		return
+	}
+
+	ban_role, err := db.GetRole(ban_user.ID)
+	if err == nil {
+		if role.RoleType == "admin" && (ban_role.RoleType == "admin" || ban_role.RoleType == "owner") {
+			return
+		}
+
+		if role.RoleType == "owner" && (ban_role.RoleType == "owner") {
+			return
+		}
+	}
+
+	if ban_user.Banned {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "The sender of this message is already banned.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+
+		return
+	}
+
+	ban_user.Banned = true
+
+	db.UpdateUser(ban_user)
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            "The sender of this message is now banned and cannot send messages.",
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		ParseMode:       "HTML",
+	})
+}
+
 func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection) {
 	var query_msg *telego.Message
 	var reply_to *telego.Message
@@ -1512,9 +1625,13 @@ func assignToTicket(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Con
 		reply_to = query_msg.ReplyToMessage
 	}
 
-	_, err := db.GetUser(reply_to.From.ID)
+	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
+		return
+	}
+
+	if user.Banned {
 		return
 	}
 
@@ -1620,9 +1737,13 @@ func setRole(bot *TBSTBBot, query *telego.CallbackQuery, db *database.Connection
 		reply_to = query_msg.ReplyToMessage
 	}
 
-	_, err := db.GetUser(reply_to.From.ID)
+	user, err := db.GetUser(reply_to.From.ID)
 	if err != nil {
 		noUser(bot, reply_to)
+		return
+	}
+
+	if user.Banned {
 		return
 	}
 
