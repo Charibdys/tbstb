@@ -119,6 +119,10 @@ func main() {
 	}, th.CommandEqual("toggle_broadcast"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		limitCommand(bot, &update, db)
+	}, th.CommandEqual("limit"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
@@ -1117,9 +1121,9 @@ func reopenCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection
 		return
 	}
 
-	// if user.CanReopen == false {
-	// 	return
-	// }
+	if !user.CanReopen {
+		return
+	}
 
 	var chatID int64
 	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
@@ -1408,6 +1412,84 @@ func toggleBroadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.C
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
 		ChatID:          telego.ChatID{ID: user.ID},
 		Text:            fmt.Sprintf("You have %s receiving broadcast messages.", status),
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		ParseMode:       "HTML",
+	})
+}
+
+func limitCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: update.Message.From.ID}, // TODO: Send this in group chats as well
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message)
+		return
+	}
+
+	if !(role.RoleType == "owner" || role.RoleType == "admin") {
+		return // Not authorized
+	}
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
+	_, ticket, message := db.GetTicketAndMessage(reply_to.MessageID, role.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+
+	limit_user, err := db.GetUser(message.Sender)
+	if err != nil {
+		return
+	}
+
+	limit_role, err := db.GetRole(limit_user.ID)
+	if err == nil {
+		if role.RoleType == "admin" && (limit_role.RoleType == "admin" || limit_role.RoleType == "owner") {
+			return
+		}
+
+		if role.RoleType == "owner" && (limit_role.RoleType == "owner") {
+			return
+		}
+	}
+
+	if !limit_user.CanReopen {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "The sender of this message is already limited and cannot reopen tickets.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+
+		return
+	}
+
+	limit_user.CanReopen = false
+
+	db.UpdateUser(limit_user)
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            "The sender of this message is now limited and cannot reopen tickets.",
 		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 		ParseMode:       "HTML",
 	})
