@@ -115,6 +115,10 @@ func main() {
 	}, th.CommandEqual("role"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		toggleBroadcastCommand(bot, &update, db)
+	}, th.CommandEqual("toggle_broadcast"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
@@ -1375,6 +1379,36 @@ func roleCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) 
 		Text:            query,
 		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 		ReplyMarkup:     markup,
+		ParseMode:       "HTML",
+	})
+}
+
+func toggleBroadcastCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		return
+	}
+
+	user, err := db.GetUser(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message)
+		return
+	}
+
+	user.DisabledBroadcasts = !user.DisabledBroadcasts
+
+	db.UpdateUser(user)
+
+	var status string
+	if user.DisabledBroadcasts {
+		status = "disabled"
+	} else {
+		status = "enabled"
+	}
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: user.ID},
+		Text:            fmt.Sprintf("You have %s receiving broadcast messages.", status),
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 		ParseMode:       "HTML",
 	})
 }
