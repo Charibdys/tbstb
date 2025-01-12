@@ -127,6 +127,10 @@ func main() {
 	}, th.CommandEqual("ban"))
 
 	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
+		unbanCommand(bot, &update, db)
+	}, th.CommandEqual("unban"))
+
+	bh.Handle(func(telegoBot *telego.Bot, update telego.Update) {
 		registerGroup(bot, &update, db, config)
 	}, AddedToGroup(bot))
 
@@ -1603,6 +1607,84 @@ func banCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
 	_, _ = bot.SendMessage(&telego.SendMessageParams{
 		ChatID:          telego.ChatID{ID: chatID},
 		Text:            "The sender of this message is now banned and cannot send messages.",
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+		ParseMode:       "HTML",
+	})
+}
+
+func unbanCommand(bot *TBSTBBot, update *telego.Update, db *database.Connection) {
+	reply_to := update.Message.ReplyToMessage
+	if reply_to == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: update.Message.From.ID}, // TODO: Send this in group chats as well
+			Text:            "Please reply to a message to use this command.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+	role, err := db.GetRole(update.Message.From.ID)
+	if err != nil {
+		noUser(bot, update.Message)
+		return
+	}
+
+	if !(role.RoleType == "owner" || role.RoleType == "admin") {
+		return // Not authorized
+	}
+
+	var chatID int64
+	if update.Message.Chat.Type == "group" || update.Message.Chat.Type == "supergroup" {
+		chatID = update.Message.Chat.ID
+	} else {
+		chatID = role.ID
+	}
+
+	_, ticket, message := db.GetTicketAndMessage(reply_to.MessageID, role.ID)
+	if ticket == nil {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "This ticket or message does not exist.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+		return
+	}
+
+	unban_user, err := db.GetUser(message.Sender)
+	if err != nil {
+		return
+	}
+
+	unban_role, err := db.GetRole(unban_user.ID)
+	if err == nil {
+		if role.RoleType == "admin" && (unban_role.RoleType == "admin" || unban_role.RoleType == "owner") {
+			return
+		}
+
+		if role.RoleType == "owner" && (unban_role.RoleType == "owner") {
+			return
+		}
+	}
+
+	if !unban_user.Banned {
+		_, _ = bot.SendMessage(&telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
+			Text:            "The sender of this message is not currently banned.",
+			ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
+			ParseMode:       "HTML",
+		})
+
+		return
+	}
+
+	unban_user.Banned = false
+
+	db.UpdateUser(unban_user)
+
+	_, _ = bot.SendMessage(&telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
+		Text:            "The sender of this message is now unbanned and can send messages.",
 		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 		ParseMode:       "HTML",
 	})
